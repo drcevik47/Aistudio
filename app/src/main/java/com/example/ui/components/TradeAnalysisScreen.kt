@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -645,33 +646,38 @@ private fun TradeAnalysisHeaderCard(
 
             if (lastFetchedAt > 0) {
                 val timeStr = SimpleDateFormat("dd.MM.yyyy HH:mm:ss", Locale.getDefault()).format(Date(lastFetchedAt))
-                Spacer(modifier = Modifier.height(10.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 2.dp)
+                ) {
                     Icon(
                         Icons.Default.Refresh,
                         contentDescription = null,
                         tint = MinimalTextMuted,
                         modifier = Modifier.size(14.dp)
                     )
-                    Spacer(modifier = Modifier.width(4.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = "Son Güncelleme: $timeStr",
                         fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
                         color = MinimalTextMuted
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
             Button(
                 onClick = onFetchAnalysis,
                 enabled = !isLoading && isApiConfigured,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(48.dp)
+                    .defaultMinSize(minHeight = 48.dp)
                     .testTag("fetch_trade_history_button"),
                 shape = RoundedCornerShape(12.dp),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MinimalPrimary,
                     contentColor = Color.White
@@ -684,20 +690,35 @@ private fun TradeAnalysisHeaderCard(
                         strokeWidth = 2.dp
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Borsadan $selectedDaysBack Günlük Veri Taranıyor...", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                } else {
-                    Icon(
-                        Icons.Default.CloudDownload,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = if (lastFetchedAt > 0) "Borsadan Yeniden Çek ve Veritabanıyla Senkronize Et ($selectedDaysBack Gün)" else "Borsadan Verileri Çek ve Veritabanına Kaydet ($selectedDaysBack Gün)",
+                        text = "Borsadan $selectedDaysBack Günlük Veri Taranıyor...",
                         fontWeight = FontWeight.SemiBold,
-                        fontSize = 12.5.sp,
+                        fontSize = 13.sp,
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center
                     )
+                } else {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            Icons.Default.CloudDownload,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (lastFetchedAt > 0) {
+                                "Verileri Yeniden Çek ve Senkronize Et ($selectedDaysBack Gün)"
+                            } else {
+                                "Verileri Çek ve Veritabanına Kaydet ($selectedDaysBack Gün)"
+                            },
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            lineHeight = 17.sp,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                    }
                 }
             }
         }
