@@ -13,9 +13,9 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # AGP 9.x için Java 21 gereklidir
+      # En güncel setup-java v5 kullanılarak sarı uyarı giderildi
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '21'
@@ -25,19 +25,26 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
-      - name: Create Dummy .env
+      # Secrets eklentisi ve signing için gerekli dosyaları hazırla
+      - name: Prepare Environment & Keystore
         run: |
           touch .env
           echo "GEMINI_API_KEY=" >> .env
+          
+          # Eğer debug.keystore repoda yoksa otomatik üret
+          if [ ! -f "debug.keystore" ]; then
+            keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          fi
 
-      # AGP 9.1.1 için gerekli olan Gradle 9.3.1 sarmalayıcısını üretir
-      - name: Generate Gradle Wrapper 9.3.1
+      # Gradle 9.3.1 Wrapper oluştur
+      - name: Generate Gradle Wrapper
         run: |
           gradle wrapper --gradle-version 9.3.1
           chmod +x gradlew
 
+      # RAM optimizasyonu ve lint/testleri atlayarak sadece APK derleme
       - name: Build Debug APK
-        run: ./gradlew assembleDebug --stacktrace
+        run: ./gradlew assembleDebug -Dorg.gradle.jvmargs="-Xmx3072m -XX:MaxMetaspaceSize=512m" -x test -x lint --stacktrace
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
