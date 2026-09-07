@@ -1,0 +1,6 @@
+{
+  "name": "Bybit MNT Bot",
+  "description": "Bybit Unified Trading Account automated 50/50 MNT-USDT rebalancing and 24/7 limit grid bot with WebSocket monitoring, Room database history, and error alerting.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
