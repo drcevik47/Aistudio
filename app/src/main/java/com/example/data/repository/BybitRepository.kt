@@ -3,8 +3,10 @@ package com.example.data.repository
 import android.util.Log
 import com.example.bot.RebalanceEngine
 import com.example.data.local.BotPreferences
+import com.example.data.local.dao.ExchangeTradeDao
 import com.example.data.local.dao.LogDao
 import com.example.data.local.dao.OrderDao
+import com.example.data.local.entity.ExchangeTradeEntity
 import com.example.data.local.entity.LogEntity
 import com.example.data.local.entity.LogLevel
 import com.example.data.local.entity.OrderEntity
@@ -14,6 +16,7 @@ import com.example.data.remote.model.BybitExecutionDto
 import com.example.data.remote.model.BybitOrderDto
 import com.example.data.remote.model.SpotTicker
 import com.example.data.remote.model.TradeAnalysisResult
+import com.example.data.remote.model.TradeSyncResult
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.CancellationException
@@ -53,7 +56,8 @@ data class LastFilledTradeInfo(
 class BybitRepository(
     private val preferences: BotPreferences,
     private val orderDao: OrderDao,
-    private val logDao: LogDao
+    private val logDao: LogDao,
+    private val exchangeTradeDao: ExchangeTradeDao
 ) {
     private val moshi = Moshi.Builder()
         .add(KotlinJsonAdapterFactory())
@@ -1487,4 +1491,215 @@ class BybitRepository(
     suspend fun getOrderByOrderId(orderId: String): OrderEntity? = withContext(Dispatchers.IO) {
         orderDao.getOrderByOrderId(orderId)
     }
+
+    /**
+     * Borsadan işlemleri çeker, mevcut Room veritabanındaki kayıtlarla karşılaştırır
+     * ve SADECE yeni olan işlemleri veritabanına ekler (deduplication / mükerrer engelleme).
+     * Ardından güncel tüm veriler üzerinden analiz ve senkronizasyon raporu döndürür.
+     */
+    suspend fun syncTradesFromExchange(
+        symbol: String? = "MNTUSDT",
+        daysBack: Int = 730,
+        apiKey: String = preferences.apiKey,
+        apiSecret: String = preferences.apiSecret,
+        isTestnet: Boolean = preferences.isTestnet,
+        onProgress: ((currentWindow: Int, totalWindows: Int, fetchedCount: Int) -> Unit)? = null
+    ): Result<TradeSyncResult> = withContext(Dispatchers.IO) {
+        try {
+            log(LogLevel.INFO, "TradeSync", "Borsadan işlemler çekilip veritabanı kontrol ediliyor...")
+
+            // 1. Borsadan seçilen zaman aralığındaki tüm işlemleri çek
+            val fetchResult = fetchTradeAnalysis(
+                symbol = symbol,
+                daysBack = daysBack,
+                apiKey = apiKey,
+                apiSecret = apiSecret,
+                isTestnet = isTestnet,
+                onProgress = onProgress
+            )
+
+            val remoteAnalysis = fetchResult.getOrElse { error ->
+                log(LogLevel.ERROR, "TradeSync", "Borsadan işlem çekilemedi: ${error.message}")
+                return@withContext Result.failure(error)
+            }
+
+            val remoteExecutions = remoteAnalysis.executions
+            val totalFetched = remoteExecutions.size
+
+            // 2. Yerel veritabanındaki mevcut kayıtlı işlem ID'lerini al
+            val existingExecIds = exchangeTradeDao.getAllExecIds().toHashSet()
+            val existingInDbCount = existingExecIds.size
+
+            // 3. Karşılaştır: Sadece veritabanında henüz bulunmayan yeni işlemleri filtrele
+            val newExecutions = remoteExecutions.filter { exec ->
+                val uniqueKey = exec.execId.ifBlank { "${exec.orderId}_${exec.execTime}" }
+                !existingExecIds.contains(uniqueKey) && !existingExecIds.contains(exec.execId)
+            }
+
+            // 4. Yeni işlemleri ExchangeTradeEntity formatına dönüştürüp veritabanına kaydet
+            if (newExecutions.isNotEmpty()) {
+                val entitiesToInsert = newExecutions.map { exec ->
+                    val uniqueKey = exec.execId.ifBlank { "${exec.orderId}_${exec.execTime}" }
+                    val effectiveSymbol = if (exec.symbol.isNotBlank()) exec.symbol else (symbol ?: "MNTUSDT")
+                    ExchangeTradeEntity(
+                        execId = uniqueKey,
+                        orderId = exec.orderId,
+                        orderLinkId = exec.orderLinkId,
+                        symbol = effectiveSymbol,
+                        side = exec.side,
+                        orderPrice = exec.orderPrice.toDoubleOrNull() ?: 0.0,
+                        orderQty = exec.orderQty.toDoubleOrNull() ?: 0.0,
+                        orderType = exec.orderType,
+                        execPrice = exec.priceValue,
+                        execQty = exec.qtyValue,
+                        execValue = exec.totalValue,
+                        execFee = exec.feeValue,
+                        feeRate = exec.feeRate.toDoubleOrNull() ?: 0.0,
+                        timeMillis = if (exec.timeMillis > 0) exec.timeMillis else System.currentTimeMillis(),
+                        isMaker = exec.isMaker
+                    )
+                }
+
+                exchangeTradeDao.insertTrades(entitiesToInsert)
+
+                // Ayrıca botun Order tablosunda bu emirler yoksa orayı da senkronize edelim
+                for (trade in entitiesToInsert) {
+                    val orderExists = orderDao.getOrderByOrderId(trade.orderId) != null
+                    if (!orderExists) {
+                        orderDao.insertOrder(
+                            OrderEntity(
+                                orderId = trade.orderId,
+                                orderLinkId = trade.orderLinkId,
+                                symbol = trade.symbol,
+                                side = trade.side,
+                                orderType = trade.orderType.ifBlank { "Limit" },
+                                price = trade.execPrice,
+                                qty = trade.execQty,
+                                status = "Filled",
+                                filledQty = trade.execQty,
+                                avgPrice = trade.execPrice,
+                                timestamp = trade.timeMillis,
+                                triggerReason = "BorsaSenkronizasyonu"
+                            )
+                        )
+                    }
+                }
+
+                log(
+                    LogLevel.SUCCESS,
+                    "TradeSync",
+                    "Senkronizasyon tamamlandı: Borsadan $totalFetched işlem çekildi. " +
+                            "$existingInDbCount işlem zaten veritabanındaydı. ${newExecutions.size} YENİ işlem eklendi!"
+                )
+            } else {
+                log(
+                    LogLevel.INFO,
+                    "TradeSync",
+                    "Senkronizasyon kontrolü: Borsadan $totalFetched işlem çekildi. Tüm işlemler zaten veritabanında mevcut, yeni işlem yok."
+                )
+            }
+
+            val totalInDb = exchangeTradeDao.getTradeCountSync()
+
+            // 5. Veritabanındaki tüm işlemleri okuyarak bütünleşik analizi hazırla
+            val allDbTrades = if (symbol.isNullOrBlank() || symbol.equals("ALL", ignoreCase = true)) {
+                exchangeTradeDao.getAllTradesSync()
+            } else {
+                exchangeTradeDao.getTradesBySymbolSync(symbol.uppercase().trim())
+            }
+
+            // DB'deki verilerden BybitExecutionDto listesi türet
+            val mergedExecutions = allDbTrades.map { dbTrade ->
+                BybitExecutionDto(
+                    symbol = dbTrade.symbol,
+                    orderId = dbTrade.orderId,
+                    orderLinkId = dbTrade.orderLinkId,
+                    side = dbTrade.side,
+                    orderPrice = dbTrade.orderPrice.toString(),
+                    orderQty = dbTrade.orderQty.toString(),
+                    orderType = dbTrade.orderType,
+                    execId = dbTrade.execId,
+                    execPrice = dbTrade.execPrice.toString(),
+                    execQty = dbTrade.execQty.toString(),
+                    execType = "Trade",
+                    execValue = dbTrade.execValue.toString(),
+                    execFee = dbTrade.execFee.toString(),
+                    feeRate = dbTrade.feeRate.toString(),
+                    execTime = dbTrade.timeMillis.toString(),
+                    isMaker = dbTrade.isMaker
+                )
+            }.ifEmpty {
+                remoteExecutions
+            }
+
+            val buyExecs = mergedExecutions.filter { it.isBuy }
+            val sellExecs = mergedExecutions.filter { it.isSell }
+
+            val totalBuyQty = buyExecs.sumOf { it.qtyValue }
+            val totalBuyValue = buyExecs.sumOf { it.totalValue }
+            val avgBuyPrice = if (totalBuyQty > 0.0) totalBuyValue / totalBuyQty else 0.0
+
+            val totalSellQty = sellExecs.sumOf { it.qtyValue }
+            val totalSellValue = sellExecs.sumOf { it.totalValue }
+            val avgSellPrice = if (totalSellQty > 0.0) totalSellValue / totalSellQty else 0.0
+
+            val priceDiff = if (avgBuyPrice > 0.0 && avgSellPrice > 0.0) avgSellPrice - avgBuyPrice else 0.0
+            val profitPcnt = if (avgBuyPrice > 0.0 && avgSellPrice > 0.0) (priceDiff / avgBuyPrice) * 100.0 else 0.0
+            val netQty = totalBuyQty - totalSellQty
+
+            val totalFee = mergedExecutions.sumOf { exec ->
+                if (exec.isBuy) {
+                    val p = if (exec.priceValue > 0.0) exec.priceValue else avgBuyPrice
+                    exec.feeValue * p
+                } else {
+                    exec.feeValue
+                }
+            }
+
+            val displaySymbol = if (symbol.isNullOrBlank() || symbol.equals("ALL", ignoreCase = true)) "Tüm Semboller" else symbol.uppercase()
+            val consolidatedAnalysis = TradeAnalysisResult(
+                symbol = displaySymbol,
+                daysRange = daysBack,
+                totalBuyQty = totalBuyQty,
+                totalBuyValue = totalBuyValue,
+                avgBuyPrice = avgBuyPrice,
+                buyTradeCount = buyExecs.size,
+                totalSellQty = totalSellQty,
+                totalSellValue = totalSellValue,
+                avgSellPrice = avgSellPrice,
+                sellTradeCount = sellExecs.size,
+                priceDifference = priceDiff,
+                profitPercentage = profitPcnt,
+                netQty = netQty,
+                totalFee = totalFee,
+                executions = mergedExecutions.sortedByDescending { it.timeMillis },
+                fetchedAt = System.currentTimeMillis()
+            )
+
+            val syncResult = TradeSyncResult(
+                totalFetched = totalFetched,
+                existingInDb = existingInDbCount,
+                newlyAddedCount = newExecutions.size,
+                totalInDb = totalInDb,
+                newlyAddedTrades = newExecutions,
+                analysis = consolidatedAnalysis
+            )
+
+            Result.success(syncResult)
+        } catch (e: Exception) {
+            log(LogLevel.ERROR, "TradeSync", "Senkronizasyon hatası: ${e.message}")
+            Result.failure(e)
+        }
+    }
+
+    suspend fun getLocalTradesCount(): Int = withContext(Dispatchers.IO) {
+        exchangeTradeDao.getTradeCountSync()
+    }
+
+    suspend fun clearLocalExchangeTrades() = withContext(Dispatchers.IO) {
+        exchangeTradeDao.clearAllTrades()
+        log(LogLevel.INFO, "TradeSync", "Yerel borsa işlem geçmişi veritabanı temizlendi")
+    }
+
+    fun getAllExchangeTradesFlow() = exchangeTradeDao.getAllTrades()
 }

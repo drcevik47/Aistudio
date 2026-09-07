@@ -8,13 +8,15 @@ import com.example.bot.GridOrdersPlan
 import com.example.bot.PortfolioAnalysis
 import com.example.bot.RebalanceAction
 import com.example.bot.RebalanceEngine
+import com.example.data.local.entity.ExchangeTradeEntity
 import com.example.data.local.entity.LogEntity
 import com.example.data.local.entity.LogLevel
 import com.example.data.local.entity.OrderEntity
 import com.example.data.remote.model.BybitOrderDto
+import com.example.data.remote.model.TradeAnalysisResult
+import com.example.data.remote.model.TradeSyncResult
 import com.example.data.repository.LastFilledTradeInfo
 import com.example.service.TradingBotService
-import com.example.data.remote.model.TradeAnalysisResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -31,7 +33,9 @@ data class TradeAnalysisUiState(
     val analysis: TradeAnalysisResult? = null,
     val errorMessage: String? = null,
     val lastFetchedAt: Long = 0L,
-    val progressText: String? = null
+    val progressText: String? = null,
+    val syncResult: TradeSyncResult? = null,
+    val syncNotice: String? = null
 )
 
 data class MainUiState(
@@ -572,10 +576,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    val exchangeTrades: StateFlow<List<ExchangeTradeEntity>> = repository.getAllExchangeTradesFlow()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     fun fetchTradeAnalysis(symbol: String? = "MNTUSDT", daysBack: Int = 730) {
         viewModelScope.launch {
-            _tradeAnalysis.update { it.copy(isLoading = true, errorMessage = null, progressText = "Bybit geçmişi taranıyor...") }
-            val result = repository.fetchTradeAnalysis(
+            _tradeAnalysis.update {
+                it.copy(
+                    isLoading = true,
+                    errorMessage = null,
+                    syncNotice = null,
+                    progressText = "Borsadan işlemler çekiliyor ve veritabanı kontrol ediliyor..."
+                )
+            }
+            val result = repository.syncTradesFromExchange(
                 symbol = symbol,
                 daysBack = daysBack,
                 onProgress = { currentWindow, totalWindows, fetchedCount ->
@@ -584,11 +598,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
             )
-            result.onSuccess { analysis ->
+            result.onSuccess { syncRes ->
+                val notice = if (syncRes.newlyAddedCount > 0) {
+                    "✓ ${syncRes.totalFetched} işlem tarandı. ${syncRes.newlyAddedCount} YENİ işlem veritabanına eklendi! (Toplam DB: ${syncRes.totalInDb})"
+                } else {
+                    "✓ ${syncRes.totalFetched} işlem tarandı. Tüm işlemler zaten veritabanında kayıtlı (Yeni işlem yok)."
+                }
                 _tradeAnalysis.update {
                     it.copy(
                         isLoading = false,
-                        analysis = analysis,
+                        analysis = syncRes.analysis,
+                        syncResult = syncRes,
+                        syncNotice = notice,
                         errorMessage = null,
                         lastFetchedAt = System.currentTimeMillis(),
                         progressText = null
@@ -602,6 +623,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         progressText = null
                     )
                 }
+            }
+        }
+    }
+
+    fun clearLocalExchangeDatabase() {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.clearLocalExchangeTrades()
+            _tradeAnalysis.update {
+                it.copy(
+                    analysis = null,
+                    syncResult = null,
+                    syncNotice = "Yerel borsa işlem veritabanı temizlendi."
+                )
             }
         }
     }

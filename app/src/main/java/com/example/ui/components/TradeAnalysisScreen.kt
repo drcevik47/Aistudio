@@ -28,11 +28,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.QueryStats
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.TrendingDown
 import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material.icons.filled.Warning
@@ -142,6 +144,71 @@ fun TradeAnalysisScreen(
                 onCustomSymbolTextChange = { customSymbolText = it },
                 onFetchAnalysis = triggerFetch
             )
+        }
+
+        // Sync Notice / Result Banner (Veritabanı Senkronizasyon Durumu)
+        if (state.syncResult != null || state.syncNotice != null) {
+            item {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MinimalSuccess.copy(alpha = 0.08f),
+                    border = BorderStroke(1.dp, MinimalSuccess.copy(alpha = 0.35f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MinimalSuccess.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Default.Storage,
+                                contentDescription = "Veritabanı",
+                                tint = MinimalSuccessDark,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "Veritabanı Senkronize Edildi",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = MinimalSuccessDark
+                                )
+                                if (state.syncResult != null && state.syncResult.newlyAddedCount > 0) {
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Surface(
+                                        shape = RoundedCornerShape(999.dp),
+                                        color = MinimalSuccess
+                                    ) {
+                                        Text(
+                                            text = "+${state.syncResult.newlyAddedCount} Yeni",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.White,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                            }
+                            Text(
+                                text = state.syncNotice ?: "Borsadaki tüm işlemler yerel veritabanıyla karşılaştırıldı ve güncellendi.",
+                                fontSize = 12.sp,
+                                color = MinimalTextPrimary,
+                                modifier = Modifier.padding(top = 2.dp),
+                                lineHeight = 16.sp
+                            )
+                        }
+                    }
+                }
+            }
         }
 
         // Error message if any
@@ -626,9 +693,10 @@ private fun TradeAnalysisHeaderCard(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = if (lastFetchedAt > 0) "Tüm Geçmişi Yeniden Çek ($selectedDaysBack Gün)" else "Borsadan İşlem Geçmişini Çek ($selectedDaysBack Gün)",
+                        text = if (lastFetchedAt > 0) "Borsadan Yeniden Çek ve Veritabanıyla Senkronize Et ($selectedDaysBack Gün)" else "Borsadan Verileri Çek ve Veritabanına Kaydet ($selectedDaysBack Gün)",
                         fontWeight = FontWeight.SemiBold,
-                        fontSize = 13.sp
+                        fontSize = 12.5.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
                     )
                 }
             }

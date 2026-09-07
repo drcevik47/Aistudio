@@ -23,7 +23,8 @@ class BybitBotApp : Application() {
         repository = BybitRepository(
             preferences = preferences,
             orderDao = database.orderDao(),
-            logDao = database.logDao()
+            logDao = database.logDao(),
+            exchangeTradeDao = database.exchangeTradeDao()
         )
     }
 }
