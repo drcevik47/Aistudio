@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.bot.RebalanceEngine
 import com.example.data.local.entity.OrderEntity
+import com.example.data.remote.model.TradeAnalysisResult
 import com.example.ui.theme.MinimalError
 import com.example.ui.theme.MinimalErrorDark
 import com.example.ui.theme.MinimalErrorLight
@@ -74,6 +75,8 @@ import java.util.Locale
 @Composable
 fun OrderHistoryScreen(
     orders: List<OrderEntity>,
+    liveAnalysis: TradeAnalysisResult? = null,
+    currentPrice: Double = 0.0,
     onClearOrders: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -89,172 +92,212 @@ fun OrderHistoryScreen(
         }
     }
 
-    Column(
+    LazyColumn(
         modifier = modifier
             .fillMaxSize()
-            .testTag("order_history_screen")
+            .testTag("order_history_screen"),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // Header & Clear Action
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+        // 1. Header & Clear Action
+        item {
             Row(
-                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
-                    .weight(1f)
-                    .padding(end = 8.dp)
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
-                        .size(38.dp)
-                        .clip(CircleShape)
-                        .background(MinimalPrimaryLight),
-                    contentAlignment = Alignment.Center
+                        .weight(1f)
+                        .padding(end = 8.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.ReceiptLong,
-                        contentDescription = null,
-                        tint = MinimalPrimary,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-                Spacer(modifier = Modifier.width(12.dp))
-                Column {
-                    Text(
-                        text = "Emir & Ticaret Geçmişi",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MinimalTextPrimary,
-                        letterSpacing = (-0.2).sp,
-                        maxLines = 1,
-                        softWrap = false
-                    )
-                    Text(
-                        text = "Toplam ${orders.size} kayıtlı işlem",
-                        fontSize = 12.sp,
-                        color = MinimalTextSecondary,
-                        maxLines = 1,
-                        softWrap = false
-                    )
-                }
-            }
-
-            if (orders.isNotEmpty()) {
-                IconButton(
-                    onClick = onClearOrders,
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(MinimalSurfaceElevated)
-                        .border(1.dp, MinimalSurfaceBorder, CircleShape)
-                        .testTag("clear_orders_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.DeleteSweep,
-                        contentDescription = "Geçmişi Temizle",
-                        tint = MinimalTextSecondary,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-            }
-        }
-
-        // Filter Chips
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            listOf(
-                "ALL" to "Tümü (${orders.size})",
-                "BUY" to "Alışlar",
-                "SELL" to "Satışlar",
-                "FILLED" to "Gerçekleşenler"
-            ).forEach { (key, label) ->
-                FilterChip(
-                    selected = selectedFilter == key,
-                    onClick = { selectedFilter = key },
-                    shape = RoundedCornerShape(999.dp),
-                    label = {
-                        Text(
-                            label,
-                            fontSize = 11.sp,
-                            fontWeight = if (selectedFilter == key) FontWeight.Bold else FontWeight.Medium,
-                            maxLines = 1,
-                            softWrap = false
-                        )
-                    },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = MinimalPrimary,
-                        selectedLabelColor = Color.White,
-                        containerColor = MinimalSurface,
-                        labelColor = MinimalTextSecondary
-                    ),
-                    border = FilterChipDefaults.filterChipBorder(
-                        enabled = true,
-                        selected = selectedFilter == key,
-                        borderColor = MinimalSurfaceBorder,
-                        selectedBorderColor = MinimalPrimary
-                    )
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        if (filteredOrders.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(32.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Box(
                         modifier = Modifier
-                            .size(64.dp)
+                            .size(38.dp)
                             .clip(CircleShape)
-                            .background(MinimalSurfaceElevated),
+                            .background(MinimalPrimaryLight),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = Icons.Default.History,
+                            imageVector = Icons.Default.ReceiptLong,
                             contentDescription = null,
-                            tint = MinimalTextMuted,
-                            modifier = Modifier.size(32.dp)
+                            tint = MinimalPrimary,
+                            modifier = Modifier.size(20.dp)
                         )
                     }
-                    Spacer(modifier = Modifier.height(14.dp))
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = "Emir & Ticaret Geçmişi",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MinimalTextPrimary,
+                            letterSpacing = (-0.2).sp,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                        Text(
+                            text = "Toplam ${orders.size} emir kaydı",
+                            fontSize = 12.sp,
+                            color = MinimalTextSecondary,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    }
+                }
+
+                if (orders.isNotEmpty()) {
+                    IconButton(
+                        onClick = onClearOrders,
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(MinimalSurfaceElevated)
+                            .border(1.dp, MinimalSurfaceBorder, CircleShape)
+                            .testTag("clear_orders_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.DeleteSweep,
+                            contentDescription = "Geçmişi Temizle",
+                            tint = MinimalTextSecondary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        // 2. Persistent Analysis Section: Karlılık ve Kazanç
+        if (liveAnalysis != null && (liveAnalysis.buyTradeCount > 0 || liveAnalysis.sellTradeCount > 0)) {
+            item {
+                TradeProfitabilityCard(
+                    analysis = liveAnalysis,
+                    currentPrice = currentPrice
+                )
+            }
+
+            // 3. Persistent Analysis Section: Tüm Alış ve Satış İşlemleri Tabloları
+            item {
+                TradeAveragesOverview(analysis = liveAnalysis)
+            }
+        }
+
+        // 4. Filter Chips Header
+        item {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Text(
-                        text = "Henüz işlem kaydı bulunamadı",
-                        color = MinimalTextPrimary,
+                        text = "Emir Kayıtları (${filteredOrders.size})",
                         fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp
+                        fontSize = 15.sp,
+                        color = MinimalTextPrimary
                     )
-                    Text(
-                        text = "Bot çalıştıkça ve alım/satım yaptıkça tüm emirler burada listelenir.",
-                        color = MinimalTextSecondary,
-                        fontSize = 12.sp,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                        modifier = Modifier.padding(top = 4.dp)
-                    )
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf(
+                        "ALL" to "Tümü (${orders.size})",
+                        "BUY" to "Alışlar",
+                        "SELL" to "Satışlar",
+                        "FILLED" to "Gerçekleşenler"
+                    ).forEach { (key, label) ->
+                        FilterChip(
+                            selected = selectedFilter == key,
+                            onClick = { selectedFilter = key },
+                            shape = RoundedCornerShape(999.dp),
+                            label = {
+                                Text(
+                                    label,
+                                    fontSize = 11.sp,
+                                    fontWeight = if (selectedFilter == key) FontWeight.Bold else FontWeight.Medium,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = MinimalPrimary,
+                                selectedLabelColor = Color.White,
+                                containerColor = MinimalSurface,
+                                labelColor = MinimalTextSecondary
+                            ),
+                            border = FilterChipDefaults.filterChipBorder(
+                                enabled = true,
+                                selected = selectedFilter == key,
+                                borderColor = MinimalSurfaceBorder,
+                                selectedBorderColor = MinimalPrimary
+                            )
+                        )
+                    }
+                }
+            }
+        }
+
+        // 5. Orders List Items
+        if (filteredOrders.isEmpty()) {
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 16.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MinimalSurface),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MinimalSurfaceBorderLight)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(52.dp)
+                                .clip(CircleShape)
+                                .background(MinimalSurfaceElevated),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.History,
+                                contentDescription = null,
+                                tint = MinimalTextMuted,
+                                modifier = Modifier.size(26.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "Filtreye uygun kayıt bulunamadı",
+                            color = MinimalTextPrimary,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp
+                        )
+                        Text(
+                            text = "Bot çalıştıkça ve alım/satım yaptıkça tüm emirler burada listelenir.",
+                            color = MinimalTextSecondary,
+                            fontSize = 12.sp,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
                 }
             }
         } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                items(filteredOrders, key = { it.id }) { order ->
-                    OrderItemCard(order = order, dateFormat = dateFormat)
-                }
+            items(filteredOrders, key = { it.id }) { order ->
+                OrderItemCard(order = order, dateFormat = dateFormat)
             }
         }
     }

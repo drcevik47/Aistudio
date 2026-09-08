@@ -47,6 +47,7 @@ class TradingBotService : Service() {
     private var currentMntPrice: Double = 0.0
     private var lastUsdtBalance: Double = 0.0
     private var lastMntBalance: Double = 0.0
+    private val notifiedFilledOrderIds = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     override fun onCreate() {
         super.onCreate()
@@ -193,11 +194,16 @@ class TradingBotService : Service() {
         val res = repository.reconcileGridOrders(callerTag = "Watchdog")
         res.onSuccess { rec ->
             if (rec.executedOrderFound) {
-                sendAlertNotification(
-                    "${rec.executedSide ?: "Grid"} Emri Gerçekleşti!",
-                    "${rec.message} Baz Fiyat: $${RebalanceEngine.format4(rec.newBasePrice)}",
-                    false
-                )
+                val execId = rec.executedOrderId.ifBlank { "exec_${rec.executedSide}_${rec.executedPrice}" }
+                if (execId.isNotBlank() && notifiedFilledOrderIds.add(execId)) {
+                    val notifId = ALERT_NOTIFICATION_ID_BASE + (execId.hashCode() and 0x7FFFFFFF) % 500
+                    sendAlertNotification(
+                        "${rec.executedSide ?: "Grid"} Emri Gerçekleşti!",
+                        "${rec.message} Baz Fiyat: $${RebalanceEngine.format4(rec.newBasePrice)}",
+                        false,
+                        notificationId = notifId
+                    )
+                }
             }
         }
     }
@@ -257,19 +263,38 @@ class TradingBotService : Service() {
 
     private suspend fun handleOrderUpdate(order: BybitOrderDto) {
         if (order.isFilled) {
+            val orderId = order.orderId
+            if (orderId.isNotBlank() && !notifiedFilledOrderIds.add(orderId)) {
+                // Already notified and processed for this exact orderId! Prevent duplicate alerts.
+                return
+            }
+
             repository.log(
                 LogLevel.SUCCESS,
                 "WebSocket",
-                "WS Bildirimi: ${order.side} emri DOLDU! Fiyat: ${order.avgPrice} MntQty: ${order.cumExecQty} (${order.orderId})"
+                "WS Bildirimi: ${order.side} emri DOLDU! Fiyat: ${order.avgPrice} MntQty: ${order.cumExecQty} ($orderId)"
             )
-            val res = repository.reconcileGridOrders(callerTag = "WebSocket")
-            res.onSuccess { rec ->
-                sendAlertNotification(
-                    "${order.side} Limit Emri Gerçekleşti!",
-                    "${order.side} ${order.cumExecQty} MNT @ ${order.avgPrice} USDT. Karşı emir iptal edildi ve yeni ızgara kuruldu.",
-                    false
-                )
-            }
+
+            // Immediately mark order as Filled in Room DB so UI updates instantly
+            val fillPrice = if (order.avgPriceValue > 0.0) order.avgPriceValue else order.priceValue
+            val fillQty = if (order.filledQtyValue > 0.0) order.filledQtyValue else order.qtyValue
+            repository.recordOrderFilled(
+                orderId = orderId,
+                side = order.side,
+                price = fillPrice,
+                qty = fillQty,
+                triggerReason = if (order.side.equals("Buy", ignoreCase = true)) "GridStepDownBuy" else "GridStepUpSell"
+            )
+
+            repository.reconcileGridOrders(callerTag = "WebSocket")
+
+            val notifId = ALERT_NOTIFICATION_ID_BASE + (orderId.hashCode() and 0x7FFFFFFF) % 500
+            sendAlertNotification(
+                "${order.side} Limit Emri Gerçekleşti!",
+                "${order.side} ${order.cumExecQty} MNT @ ${order.avgPrice} USDT. Karşı emir iptal edildi ve yeni ızgara kuruldu.",
+                false,
+                notificationId = notifId
+            )
         }
     }
 
@@ -407,14 +432,9 @@ class TradingBotService : Service() {
 
                 preferences.lastRebalancePrice = newBasePrice
                 updateNotification()
-                sendAlertNotification(
-                    "Yeni %$stepPercent Limit Emirleri Koyuldu",
-                    "Baz: ${RebalanceEngine.format4(newBasePrice)} | Alış: ${RebalanceEngine.format4(plan.buyLimitPrice)} | Satış: ${RebalanceEngine.format4(plan.sellLimitPrice)}",
-                    false
-                )
             } else {
                 repository.log(LogLevel.WARN, "GridEngine", "Yeni emir planı oluşturulamadı: ${plan.validationMessage}")
-                sendAlertNotification("Grid Plan Uyarısı", plan.validationMessage, true)
+                sendAlertNotification("Grid Plan Uyarısı", plan.validationMessage, true, ALERT_NOTIFICATION_ID_BASE + 99)
             }
         }
     }
@@ -460,13 +480,20 @@ class TradingBotService : Service() {
             .build()
     }
 
-    private fun sendAlertNotification(title: String, message: String, isError: Boolean) {
+    private fun sendAlertNotification(
+        title: String,
+        message: String,
+        isError: Boolean,
+        notificationId: Int = ALERT_NOTIFICATION_ID_BASE
+    ) {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val intent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
         val pendingIntent = PendingIntent.getActivity(
-            this, (10..999).random(), intent,
+            this,
+            notificationId,
+            intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
@@ -481,7 +508,7 @@ class TradingBotService : Service() {
             .setDefaults(Notification.DEFAULT_ALL)
             .build()
 
-        manager.notify(ALERT_NOTIFICATION_ID_BASE + (0..50).random(), notification)
+        manager.notify(notificationId, notification)
     }
 
     private fun stopBot() {

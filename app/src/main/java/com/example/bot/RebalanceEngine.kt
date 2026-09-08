@@ -1,5 +1,9 @@
 package com.example.bot
 
+import com.example.data.local.entity.ExchangeTradeEntity
+import com.example.data.local.entity.OrderEntity
+import com.example.data.remote.model.BybitExecutionDto
+import com.example.data.remote.model.TradeAnalysisResult
 import java.util.Locale
 import kotlin.math.abs
 
@@ -255,4 +259,119 @@ object RebalanceEngine {
 
     fun format2(value: Double): String = String.format(Locale.US, "%.2f", value)
     fun format4(value: Double): String = String.format(Locale.US, "%.4f", value)
+
+    fun computeLiveTradeAnalysis(
+        orders: List<OrderEntity>,
+        exchangeTrades: List<ExchangeTradeEntity> = emptyList(),
+        apiAnalysis: TradeAnalysisResult? = null,
+        symbol: String = "MNTUSDT"
+    ): TradeAnalysisResult {
+        // If exchangeTrades has synced data, prioritize it because it contains real exchange fill data!
+        if (exchangeTrades.isNotEmpty()) {
+            val buyTrades = exchangeTrades.filter { it.isBuy }
+            val sellTrades = exchangeTrades.filter { it.isSell }
+
+            val totalBuyQty = buyTrades.sumOf { it.execQty }
+            val totalBuyValue = buyTrades.sumOf { it.totalValue }
+            val avgBuyPrice = if (totalBuyQty > 0.0) totalBuyValue / totalBuyQty else 0.0
+
+            val totalSellQty = sellTrades.sumOf { it.execQty }
+            val totalSellValue = sellTrades.sumOf { it.totalValue }
+            val avgSellPrice = if (totalSellQty > 0.0) totalSellValue / totalSellQty else 0.0
+
+            val priceDiff = avgSellPrice - avgBuyPrice
+            val profitPcnt = if (avgBuyPrice > 0.0) ((avgSellPrice - avgBuyPrice) / avgBuyPrice) * 100.0 else 0.0
+            val netQty = totalBuyQty - totalSellQty
+            val totalFee = exchangeTrades.sumOf { it.execFee }
+
+            val executions = exchangeTrades.map { trade ->
+                BybitExecutionDto(
+                    execId = trade.execId,
+                    orderId = trade.orderId,
+                    orderLinkId = trade.orderLinkId,
+                    symbol = trade.symbol,
+                    side = trade.side,
+                    orderPrice = trade.orderPrice.toString(),
+                    orderQty = trade.orderQty.toString(),
+                    orderType = trade.orderType,
+                    execPrice = trade.execPrice.toString(),
+                    execQty = trade.execQty.toString(),
+                    execValue = trade.execValue.toString(),
+                    execFee = trade.execFee.toString(),
+                    feeRate = trade.feeRate.toString(),
+                    execTime = trade.timeMillis.toString(),
+                    isMaker = trade.isMaker
+                )
+            }
+
+            return TradeAnalysisResult(
+                symbol = symbol,
+                daysRange = 365,
+                totalBuyQty = totalBuyQty,
+                totalBuyValue = totalBuyValue,
+                avgBuyPrice = avgBuyPrice,
+                buyTradeCount = buyTrades.size,
+                totalSellQty = totalSellQty,
+                totalSellValue = totalSellValue,
+                avgSellPrice = avgSellPrice,
+                sellTradeCount = sellTrades.size,
+                priceDifference = priceDiff,
+                profitPercentage = profitPcnt,
+                netQty = netQty,
+                totalFee = totalFee,
+                executions = executions,
+                fetchedAt = System.currentTimeMillis()
+            )
+        }
+
+        // If apiAnalysis is present and has executions, use it
+        if (apiAnalysis != null && apiAnalysis.executions.isNotEmpty()) {
+            return apiAnalysis
+        }
+
+        // Otherwise compute directly from Room orders table (which live updates with every bot trade!)
+        val filledOrders = orders.filter { it.status.equals("Filled", ignoreCase = true) }
+        val buyOrders = filledOrders.filter { it.side.equals("Buy", ignoreCase = true) }
+        val sellOrders = filledOrders.filter { it.side.equals("Sell", ignoreCase = true) }
+
+        val totalBuyQty = buyOrders.sumOf { if (it.filledQty > 0.0) it.filledQty else it.qty }
+        val totalBuyValue = buyOrders.sumOf { 
+            val q = if (it.filledQty > 0.0) it.filledQty else it.qty
+            val p = if (it.avgPrice > 0.0) it.avgPrice else it.price
+            q * p
+        }
+        val avgBuyPrice = if (totalBuyQty > 0.0) totalBuyValue / totalBuyQty else 0.0
+
+        val totalSellQty = sellOrders.sumOf { if (it.filledQty > 0.0) it.filledQty else it.qty }
+        val totalSellValue = sellOrders.sumOf { 
+            val q = if (it.filledQty > 0.0) it.filledQty else it.qty
+            val p = if (it.avgPrice > 0.0) it.avgPrice else it.price
+            q * p
+        }
+        val avgSellPrice = if (totalSellQty > 0.0) totalSellValue / totalSellQty else 0.0
+
+        val priceDiff = avgSellPrice - avgBuyPrice
+        val profitPcnt = if (avgBuyPrice > 0.0) ((avgSellPrice - avgBuyPrice) / avgBuyPrice) * 100.0 else 0.0
+        val netQty = totalBuyQty - totalSellQty
+        val totalFee = (totalBuyValue + totalSellValue) * 0.001
+
+        return TradeAnalysisResult(
+            symbol = symbol,
+            daysRange = 365,
+            totalBuyQty = totalBuyQty,
+            totalBuyValue = totalBuyValue,
+            avgBuyPrice = avgBuyPrice,
+            buyTradeCount = buyOrders.size,
+            totalSellQty = totalSellQty,
+            totalSellValue = totalSellValue,
+            avgSellPrice = avgSellPrice,
+            sellTradeCount = sellOrders.size,
+            priceDifference = priceDiff,
+            profitPercentage = profitPcnt,
+            netQty = netQty,
+            totalFee = totalFee,
+            executions = emptyList(),
+            fetchedAt = System.currentTimeMillis()
+        )
+    }
 }

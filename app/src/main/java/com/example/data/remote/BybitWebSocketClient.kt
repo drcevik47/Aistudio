@@ -59,10 +59,11 @@ class BybitWebSocketClient(
     private fun shouldEmitFilledOrder(orderId: String): Boolean {
         if (orderId.isBlank()) return true
         val now = System.currentTimeMillis()
-        // Clean entries older than 15 seconds
-        recentlyEmittedFilledOrders.entries.removeIf { now - it.value > 15_000L }
+        // Clean entries older than 60 seconds
+        recentlyEmittedFilledOrders.entries.removeIf { now - it.value > 60_000L }
         val prev = recentlyEmittedFilledOrders.putIfAbsent(orderId, now)
-        return prev == null || (now - prev > 5_000L)
+        // Return true only once for this orderId within the 60-second window
+        return prev == null
     }
 
     fun connect(key: String, secret: String, testnet: Boolean, timeOffsetMs: Long = 0L) {

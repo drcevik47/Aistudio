@@ -22,6 +22,9 @@ interface OrderDao {
     @Query("SELECT * FROM orders WHERE orderId = :orderId LIMIT 1")
     suspend fun getOrderByOrderId(orderId: String): OrderEntity?
 
+    @Query("SELECT * FROM orders WHERE status = 'New' OR status = 'PartiallyFilled'")
+    suspend fun getOpenOrdersFromDb(): List<OrderEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertOrder(order: OrderEntity): Long
 

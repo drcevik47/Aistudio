@@ -726,48 +726,53 @@ private fun TradeAnalysisHeaderCard(
 }
 
 @Composable
-private fun TradeAveragesOverview(analysis: TradeAnalysisResult) {
+fun TradeAveragesOverview(
+    analysis: TradeAnalysisResult,
+    showHeaderBanner: Boolean = true
+) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        // Range & Count Info Banner
-        Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = MinimalSurfaceElevated,
-            border = BorderStroke(1.dp, MinimalSurfaceBorder),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+        if (showHeaderBanner) {
+            // Range & Count Info Banner
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MinimalSurfaceElevated,
+                border = BorderStroke(1.dp, MinimalSurfaceBorder),
+                modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f, fill = false).padding(end = 8.dp)
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        Icons.Default.QueryStats,
-                        contentDescription = null,
-                        tint = MinimalPrimary,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f, fill = false).padding(end = 8.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.QueryStats,
+                            contentDescription = null,
+                            tint = MinimalPrimary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "${analysis.symbol} • Son ${analysis.daysRange} Gün",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MinimalTextPrimary,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    }
                     Text(
-                        text = "${analysis.symbol} • Son ${analysis.daysRange} Gün",
+                        text = "Toplam ${analysis.executions.size} İşlem",
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
-                        color = MinimalTextPrimary,
+                        color = MinimalPrimary,
                         maxLines = 1,
                         softWrap = false
                     )
                 }
-                Text(
-                    text = "Toplam ${analysis.executions.size} İşlem",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MinimalPrimary,
-                    maxLines = 1,
-                    softWrap = false
-                )
             }
         }
 
@@ -968,7 +973,7 @@ private fun TradeAveragesOverview(analysis: TradeAnalysisResult) {
 }
 
 @Composable
-private fun TradeProfitabilityCard(
+fun TradeProfitabilityCard(
     analysis: TradeAnalysisResult,
     currentPrice: Double = 0.0
 ) {

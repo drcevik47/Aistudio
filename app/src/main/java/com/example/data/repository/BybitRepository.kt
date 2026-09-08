@@ -41,6 +41,7 @@ data class ReconciliationResult(
     val executedSide: String? = null,
     val executedPrice: Double = 0.0,
     val executedQty: Double = 0.0,
+    val executedOrderId: String = "",
     val newBasePrice: Double = 0.0,
     val message: String = ""
 )
@@ -613,6 +614,10 @@ class BybitRepository(
                 // Ensure tracked IDs match
                 if (activeBuyId != openBuyOrder.orderId) preferences.activeBuyOrderId = openBuyOrder.orderId
                 if (activeSellId != openSellOrder.orderId) preferences.activeSellOrderId = openSellOrder.orderId
+
+                // Make sure any stale past orders in DB are synced to Filled/Cancelled
+                syncUnfilledOrdersWithExchange()
+
                 return@withContext Result.success(
                     ReconciliationResult(
                         executedOrderFound = false,
@@ -717,16 +722,13 @@ class BybitRepository(
 
                 // 3. Record filled trade in Room database ONLY if genuinely filled
                 if (!isCancelledWithoutFill && (filledOrder != null || filledExec != null || execQty > 0.0 || missingOrderId.isNotBlank())) {
-                    val isAlreadyRecorded = orderDao.getOrderByOrderId(execOrderId) != null
-                    if (!isAlreadyRecorded) {
-                        recordOrderFilled(
-                            orderId = execOrderId,
-                            side = missingSide,
-                            price = finalExecPrice,
-                            qty = execQty,
-                            triggerReason = if (missingSide.equals("Buy", ignoreCase = true)) "GridStepDownBuy" else "GridStepUpSell"
-                        )
-                    }
+                    recordOrderFilled(
+                        orderId = execOrderId,
+                        side = missingSide,
+                        price = finalExecPrice,
+                        qty = execQty,
+                        triggerReason = if (missingSide.equals("Buy", ignoreCase = true)) "GridStepDownBuy" else "GridStepUpSell"
+                    )
                 }
 
                 // 4. Update anchor base price
@@ -793,6 +795,7 @@ class BybitRepository(
                                 executedSide = if (!isCancelledWithoutFill) missingSide else null,
                                 executedPrice = finalExecPrice,
                                 executedQty = execQty,
+                                executedOrderId = if (!isCancelledWithoutFill) execOrderId else "",
                                 newBasePrice = finalExecPrice,
                                 message = if (!isCancelledWithoutFill) "$missingSide emri gerçekleşti! Karşı emir iptal edilip yeni ızgara kuruldu."
                                           else "İptal edilen emir sonrası yeni ızgara kuruldu."
@@ -807,6 +810,7 @@ class BybitRepository(
                         executedSide = if (!isCancelledWithoutFill) missingSide else null,
                         executedPrice = finalExecPrice,
                         executedQty = execQty,
+                        executedOrderId = if (!isCancelledWithoutFill) execOrderId else "",
                         newBasePrice = finalExecPrice,
                         message = if (!isCancelledWithoutFill) "$missingSide emri gerçekleşti." else "İptal tespit edildi."
                     )
@@ -851,16 +855,13 @@ class BybitRepository(
                 val latestId = latestFilled?.orderId ?: latestExec?.orderId ?: ""
 
                 if (!isCancelledOnly && latestId.isNotBlank() && (latestFilled?.avgPriceValue ?: 0.0) > 0.0) {
-                    val isAlreadyRecorded = orderDao.getOrderByOrderId(latestId) != null
-                    if (!isAlreadyRecorded) {
-                        recordOrderFilled(
-                            orderId = latestId,
-                            side = latestSide,
-                            price = latestFilled!!.avgPriceValue,
-                            qty = latestQty,
-                            triggerReason = "RecentFilledRecovery"
-                        )
-                    }
+                    recordOrderFilled(
+                        orderId = latestId,
+                        side = latestSide,
+                        price = latestFilled!!.avgPriceValue,
+                        qty = latestQty,
+                        triggerReason = "RecentFilledRecovery"
+                    )
                 } else if (isCancelledOnly) {
                     log(LogLevel.INFO, callerTag, "Önceki emirler borsada iptal edilmiş. Baz fiyattan ($$basePrice) yeni ızgara kuruluyor...")
                 }
@@ -902,6 +903,8 @@ class BybitRepository(
                                     executedOrderFound = (latestFilled != null),
                                     executedSide = latestSide.ifBlank { null },
                                     executedPrice = basePrice,
+                                    executedQty = latestQty,
+                                    executedOrderId = latestId,
                                     newBasePrice = basePrice,
                                     message = if (latestFilled != null) "Açık emirler tamamlanmıştı, yeni ızgara açıldı."
                                               else "Yeni ızgara açıldı."
@@ -1478,9 +1481,104 @@ class BybitRepository(
                     )
                 )
             }
+
+            // Also keep exchange_trades in sync for instant analysis computation
+            val execPrice = if (price > 0.0) price else existing?.price ?: 0.0
+            val execQty = if (qty > 0.0) qty else existing?.qty ?: 0.0
+            if (execPrice > 0.0 && execQty > 0.0) {
+                val execValue = execPrice * execQty
+                val execFee = execValue * 0.001
+                val execId = "fill_${orderId}_${System.currentTimeMillis()}"
+                exchangeTradeDao.insertTrade(
+                    ExchangeTradeEntity(
+                        execId = execId,
+                        orderId = orderId,
+                        symbol = "MNTUSDT",
+                        side = side,
+                        orderPrice = execPrice,
+                        orderQty = execQty,
+                        orderType = "Limit",
+                        execPrice = execPrice,
+                        execQty = execQty,
+                        execValue = execValue,
+                        execFee = execFee,
+                        timeMillis = System.currentTimeMillis(),
+                        isMaker = true
+                    )
+                )
+            }
+
             log(LogLevel.SUCCESS, "OrderHistory", "İşlem Room Veritabanına kaydedildi: $side $orderId @ $price")
         } catch (e: Exception) {
             log(LogLevel.WARN, "OrderHistory", "Veritabanı kayıt hatası: ${e.message}")
+        }
+    }
+
+    suspend fun syncUnfilledOrdersWithExchange(): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            if (!preferences.isConfigured) return@withContext Result.success(Unit)
+            val openOrdersInDb = orderDao.getOpenOrdersFromDb()
+            if (openOrdersInDb.isEmpty()) return@withContext Result.success(Unit)
+
+            // Get current active open orders directly from Bybit
+            val liveOpenOrdersRes = getOpenOrders()
+            val liveOpenOrders = liveOpenOrdersRes.getOrDefault(emptyList())
+            val liveOpenOrderIds = liveOpenOrders.map { it.orderId }.toSet()
+
+            // Fetch recent orders from Bybit to see if missing orders are Filled
+            val recentOrdersRes = getRecentOrdersList(limit = 30)
+            val recentOrders = recentOrdersRes.getOrDefault(emptyList()).associateBy { it.orderId }
+
+            for (dbOrder in openOrdersInDb) {
+                // If it is currently open on exchange, leave it as New
+                if (liveOpenOrderIds.contains(dbOrder.orderId)) {
+                    continue
+                }
+
+                // It is not in Bybit's open orders. Let's see what happened to it
+                val exOrder = recentOrders[dbOrder.orderId]
+                if (exOrder != null) {
+                    if (exOrder.isFilled || exOrder.filledQtyValue > 0.0) {
+                        log(
+                            LogLevel.SUCCESS,
+                            "OrderSync",
+                            "Açık görünen emir borsada GERÇEKLEŞMİŞ olarak güncellendi: ${dbOrder.side} ${dbOrder.orderId} @ ${exOrder.avgPriceValue}"
+                        )
+                        recordOrderFilled(
+                            orderId = dbOrder.orderId,
+                            side = dbOrder.side,
+                            price = if (exOrder.avgPriceValue > 0.0) exOrder.avgPriceValue else dbOrder.price,
+                            qty = if (exOrder.filledQtyValue > 0.0) exOrder.filledQtyValue else dbOrder.qty,
+                            triggerReason = dbOrder.triggerReason
+                        )
+                    } else if (exOrder.orderStatus.equals("Cancelled", ignoreCase = true) ||
+                        exOrder.orderStatus.equals("Deactivated", ignoreCase = true)) {
+                        log(LogLevel.INFO, "OrderSync", "Borsada iptal edilmiş emir veritabanından kaldırıldı: ${dbOrder.orderId}")
+                        orderDao.deleteOrder(dbOrder.orderId)
+                    }
+                } else {
+                    // Not found in recent orders or open orders.
+                    // If this order is older than 45 seconds and neither activeBuyOrderId nor activeSellOrderId,
+                    // it was executed or replaced by newer grid steps.
+                    val isOlder = System.currentTimeMillis() - dbOrder.timestamp > 45_000L
+                    val isNotActiveGrid = dbOrder.orderId != preferences.activeBuyOrderId &&
+                            dbOrder.orderId != preferences.activeSellOrderId
+                    if (isOlder && isNotActiveGrid) {
+                        log(LogLevel.INFO, "OrderSync", "Geçmiş açık emir gerçekleşti olarak işaretleniyor: ${dbOrder.side} ${dbOrder.orderId}")
+                        recordOrderFilled(
+                            orderId = dbOrder.orderId,
+                            side = dbOrder.side,
+                            price = dbOrder.price,
+                            qty = dbOrder.qty,
+                            triggerReason = dbOrder.triggerReason
+                        )
+                    }
+                }
+            }
+            Result.success(Unit)
+        } catch (e: Exception) {
+            log(LogLevel.WARN, "OrderSync", "Açık emir senkronizasyon hatası: ${e.message}")
+            Result.failure(e)
         }
     }
 

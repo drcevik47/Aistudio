@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -91,10 +92,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _tradeAnalysis = MutableStateFlow(TradeAnalysisUiState())
     val tradeAnalysis: StateFlow<TradeAnalysisUiState> = _tradeAnalysis.asStateFlow()
 
+    val liveAnalysis: StateFlow<TradeAnalysisResult?> = combine(
+        orders,
+        repository.getAllExchangeTradesFlow(),
+        _tradeAnalysis
+    ) { orderList, tradeList, analysisUiState ->
+        RebalanceEngine.computeLiveTradeAnalysis(
+            orders = orderList,
+            exchangeTrades = tradeList,
+            apiAnalysis = analysisUiState.analysis
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
     init {
         if (preferences.isConfigured) {
             if (preferences.isBotActive) {
                 TradingBotService.start(getApplication())
+            }
+            viewModelScope.launch(Dispatchers.IO) {
+                repository.syncUnfilledOrdersWithExchange()
             }
             refreshData()
         }
@@ -114,6 +130,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun silentRefresh(cycleCount: Int = 0) {
         try {
+            // Periodically check and sync any unfilled orders in DB with exchange
+            if (cycleCount % 4 == 0) {
+                repository.syncUnfilledOrdersWithExchange()
+            }
             var currentPrice = _uiState.value.currentPrice
             var priceChange = _uiState.value.price24hChange
             val tickerRes = repository.getMntTicker()
