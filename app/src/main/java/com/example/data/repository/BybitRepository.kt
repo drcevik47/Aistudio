@@ -163,6 +163,24 @@ class BybitRepository(
         return String.format(Locale.US, "%.4f", price)
     }
 
+    private val logInsertCounter = java.util.concurrent.atomic.AtomicInteger(0)
+
+    suspend fun pruneLogs(
+        maxAgeMillis: Long = 24 * 60 * 60 * 1000L, // 24 hours
+        maxLogsToKeep: Int = 10000
+    ) = withContext(Dispatchers.IO) {
+        try {
+            val cutoff = System.currentTimeMillis() - maxAgeMillis
+            val deletedByAge = logDao.pruneOldLogs(cutoff)
+            val deletedByCount = logDao.pruneExcessLogs(maxLogsToKeep)
+            if (deletedByAge > 0 || deletedByCount > 0) {
+                Log.d("BybitRepository", "Log pruning: $deletedByAge old logs deleted, $deletedByCount excess logs pruned")
+            }
+        } catch (e: Exception) {
+            Log.e("BybitRepository", "Failed to prune logs: ${e.message}")
+        }
+    }
+
     suspend fun log(level: LogLevel, tag: String, message: String, details: String = "") {
         try {
             logDao.insertLog(
@@ -174,6 +192,11 @@ class BybitRepository(
                 )
             )
             Log.d(tag, "[${level.name}] $message $details")
+
+            // Periodically prune logs older than 24 hours or exceeding 1000 items
+            if (logInsertCounter.incrementAndGet() % 50 == 0) {
+                pruneLogs()
+            }
         } catch (e: Exception) {
             Log.e("Repository", "Failed to insert log", e)
         }

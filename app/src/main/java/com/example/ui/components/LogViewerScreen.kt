@@ -43,6 +43,7 @@ import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Warning
 import androidx.core.content.FileProvider
 import java.io.File
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -59,6 +60,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -118,6 +120,7 @@ fun LogViewerScreen(
 
     var selectedLevel by remember { mutableStateOf("ALL") }
     var showShareSheet by remember { mutableStateOf(false) }
+    var showClearConfirmDialog by remember { mutableStateOf(false) }
     var copiedFeedbackId by remember { mutableStateOf<Long?>(null) }
 
     val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
@@ -236,7 +239,7 @@ fun LogViewerScreen(
                             maxLines = 1
                         )
                         Text(
-                            text = "Canlı telemetri • ${logs.size} kayıt",
+                            text = "Canlı telemetri • ${logs.size} kayıt (Maks. 10.000 / 24s döngü)",
                             fontSize = 11.sp,
                             color = MinimalTextSecondary,
                             maxLines = 1
@@ -305,7 +308,7 @@ fun LogViewerScreen(
 
                         // Logları Temizle
                         IconButton(
-                            onClick = onClearLogs,
+                            onClick = { showClearConfirmDialog = true },
                             modifier = Modifier
                                 .size(32.dp)
                                 .clip(CircleShape)
@@ -322,6 +325,49 @@ fun LogViewerScreen(
                         }
                     }
                 }
+            }
+
+            if (showClearConfirmDialog) {
+                AlertDialog(
+                    onDismissRequest = { showClearConfirmDialog = false },
+                    title = {
+                        Text(
+                            text = "Log Geçmişini Temizle",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 17.sp,
+                            color = MinimalTextPrimary
+                        )
+                    },
+                    text = {
+                        Text(
+                            text = "Sistem logları artık otomatik olarak 24 saatten eski kayıtları ve 10.000 adedi aşanları düzenli olarak siler.\n\nMevcut ${logs.size} log kaydının tamamını şimdi temizlemek istiyor musunuz?",
+                            fontSize = 13.sp,
+                            color = MinimalTextSecondary,
+                            lineHeight = 18.sp
+                        )
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                showClearConfirmDialog = false
+                                onClearLogs()
+                                coroutineScope.launch {
+                                    snackbarHostState.showSnackbar("Tüm loglar temizlendi.")
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MinimalError)
+                        ) {
+                            Text("Tümünü Temizle", color = Color.White, fontWeight = FontWeight.Bold)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showClearConfirmDialog = false }) {
+                            Text("Vazgeç", color = MinimalTextSecondary)
+                        }
+                    },
+                    containerColor = MinimalSurface,
+                    shape = RoundedCornerShape(16.dp)
+                )
             }
 
             // Filter Chips (Horizontally Scrollable)

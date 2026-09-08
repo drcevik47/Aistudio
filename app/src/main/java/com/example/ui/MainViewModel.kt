@@ -110,9 +110,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 TradingBotService.start(getApplication())
             }
             viewModelScope.launch(Dispatchers.IO) {
+                repository.pruneLogs()
                 repository.syncUnfilledOrdersWithExchange()
             }
             refreshData()
+        } else {
+            viewModelScope.launch(Dispatchers.IO) {
+                repository.pruneLogs()
+            }
         }
 
         // Live background update loop: keeps active orders, balances, and prices up-to-date in real-time
@@ -133,6 +138,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             // Periodically check and sync any unfilled orders in DB with exchange
             if (cycleCount % 4 == 0) {
                 repository.syncUnfilledOrdersWithExchange()
+            }
+            // Periodically prune logs older than 24 hours or exceeding 1000 items
+            if (cycleCount % 30 == 0) {
+                repository.pruneLogs()
             }
             var currentPrice = _uiState.value.currentPrice
             var priceChange = _uiState.value.price24hChange

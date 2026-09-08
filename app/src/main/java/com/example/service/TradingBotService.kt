@@ -169,13 +169,16 @@ class TradingBotService : Service() {
                     // 3. Check active grid limit orders
                     checkActiveOrdersStatus()
 
-                    // Periodic heartbeat log every 5 minutes (~75 cycles)
-                    if (cycleCount % 75 == 0 && currentMntPrice > 0.0) {
-                        repository.log(
-                            LogLevel.INFO,
-                            "Watchdog",
-                            "7/24 Bot aktif ve çalışıyor (Anlık MNT: $${RebalanceEngine.format4(currentMntPrice)})"
-                        )
+                    // Periodic heartbeat log and log pruning every 5 minutes (~75 cycles)
+                    if (cycleCount % 75 == 0) {
+                        repository.pruneLogs()
+                        if (currentMntPrice > 0.0) {
+                            repository.log(
+                                LogLevel.INFO,
+                                "Watchdog",
+                                "7/24 Bot aktif ve çalışıyor (Anlık MNT: $${RebalanceEngine.format4(currentMntPrice)})"
+                            )
+                        }
                     }
 
                     cycleCount++
