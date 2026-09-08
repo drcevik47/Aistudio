@@ -470,7 +470,7 @@ fun DashboardScreen(
                         state = tradeAnalysisState,
                         isApiConfigured = state.isConfigured,
                         currentPrice = state.currentPrice,
-                        onFetchAnalysis = { symbol, days -> viewModel.fetchTradeAnalysis(symbol, days) }
+                        onFetchAnalysis = { symbol, days, startTimestamp -> viewModel.fetchTradeAnalysis(symbol, days, startTimestamp) }
                     )
                 }
                 2 -> {

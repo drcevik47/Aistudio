@@ -190,20 +190,12 @@ object RebalanceEngine {
         // the theoretical infinitesimal rebalance size is:
         val targetUsdtTrade = (halfEquityAtBase * stepRatio) / 2.0
 
-        // Bybit Spot minimum order amount is 5.0 USDT (we use 5.15 USDT buffer to avoid rounding rejections).
+        // Bybit Spot minimum order amount is 5.0 USDT
         val minUsdtAmt = 5.0
-        val safeMinTrade = 5.15
-        // If portfolio is small (e.g. 50-500 USDT), targetUsdtTrade would be < 5.0 USDT and rejected.
-        // We safely clamp effective trade size to safeMinTrade if balance permits.
-        val effectiveUsdtTrade = if (targetUsdtTrade < safeMinTrade) {
-            safeMinTrade
-        } else {
-            targetUsdtTrade
-        }
 
         // 1. SELL LIMIT ORDER (+stepPercent)
-        // Sell effectiveUsdtTrade worth of MNT at sellPrice
-        var sellMntQty = effectiveUsdtTrade / sellPrice
+        // Sell targetUsdtTrade worth of MNT at sellPrice
+        var sellMntQty = targetUsdtTrade / sellPrice
         sellMntQty = kotlin.math.floor(sellMntQty * 100.0) / 100.0
         if (sellMntQty > mntBalance * 0.99) {
             sellMntQty = kotlin.math.floor(mntBalance * 0.99 * 100.0) / 100.0
@@ -213,8 +205,8 @@ object RebalanceEngine {
         val postSellMntValue = (mntBalance - sellMntQty) * sellPrice
 
         // 2. BUY LIMIT ORDER (-stepPercent)
-        // Buy effectiveUsdtTrade worth of MNT at buyPrice
-        var buyMntQty = effectiveUsdtTrade / buyPrice
+        // Buy targetUsdtTrade worth of MNT at buyPrice
+        var buyMntQty = targetUsdtTrade / buyPrice
         buyMntQty = kotlin.math.floor(buyMntQty * 100.0) / 100.0
         var buyUsdtValue = buyMntQty * buyPrice
         if (buyUsdtValue > usdtBalance * 0.99) {
@@ -266,25 +258,13 @@ object RebalanceEngine {
         apiAnalysis: TradeAnalysisResult? = null,
         symbol: String = "MNTUSDT"
     ): TradeAnalysisResult {
-        // If exchangeTrades has synced data, prioritize it because it contains real exchange fill data!
-        if (exchangeTrades.isNotEmpty()) {
-            val buyTrades = exchangeTrades.filter { it.isBuy }
-            val sellTrades = exchangeTrades.filter { it.isSell }
+        // Collect all distinct registered executions from exchangeTrades and orders
+        val allExecutions = mutableListOf<BybitExecutionDto>()
+        val knownOrderIds = exchangeTrades.map { it.orderId }.toHashSet()
+        val knownExecIds = exchangeTrades.map { it.execId }.toHashSet()
 
-            val totalBuyQty = buyTrades.sumOf { it.execQty }
-            val totalBuyValue = buyTrades.sumOf { it.totalValue }
-            val avgBuyPrice = if (totalBuyQty > 0.0) totalBuyValue / totalBuyQty else 0.0
-
-            val totalSellQty = sellTrades.sumOf { it.execQty }
-            val totalSellValue = sellTrades.sumOf { it.totalValue }
-            val avgSellPrice = if (totalSellQty > 0.0) totalSellValue / totalSellQty else 0.0
-
-            val priceDiff = avgSellPrice - avgBuyPrice
-            val profitPcnt = if (avgBuyPrice > 0.0) ((avgSellPrice - avgBuyPrice) / avgBuyPrice) * 100.0 else 0.0
-            val netQty = totalBuyQty - totalSellQty
-            val totalFee = exchangeTrades.sumOf { it.execFee }
-
-            val executions = exchangeTrades.map { trade ->
+        exchangeTrades.forEach { trade ->
+            allExecutions.add(
                 BybitExecutionDto(
                     execId = trade.execId,
                     orderId = trade.orderId,
@@ -302,75 +282,95 @@ object RebalanceEngine {
                     execTime = trade.timeMillis.toString(),
                     isMaker = trade.isMaker
                 )
+            )
+        }
+
+        // Add any filled orders from the local orders table that might not be in exchangeTrades yet
+        val filledOrders = orders.filter { it.status.equals("Filled", ignoreCase = true) }
+        filledOrders.forEach { order ->
+            val isKnown = knownOrderIds.contains(order.orderId) ||
+                    knownExecIds.contains(order.orderId) ||
+                    knownExecIds.contains("fill_${order.orderId}")
+            if (!isKnown) {
+                val p = if (order.avgPrice > 0.0) order.avgPrice else order.price
+                val q = if (order.filledQty > 0.0) order.filledQty else order.qty
+                val v = p * q
+                allExecutions.add(
+                    BybitExecutionDto(
+                        execId = "order_${order.orderId}",
+                        orderId = order.orderId,
+                        orderLinkId = order.orderLinkId,
+                        symbol = order.symbol,
+                        side = order.side,
+                        orderPrice = p.toString(),
+                        orderQty = q.toString(),
+                        orderType = order.orderType,
+                        execPrice = p.toString(),
+                        execQty = q.toString(),
+                        execValue = v.toString(),
+                        execFee = (v * 0.001).toString(),
+                        execTime = order.timestamp.toString(),
+                        isMaker = true
+                    )
+                )
+            }
+        }
+
+        if (allExecutions.isNotEmpty()) {
+            val buyExecs = allExecutions.filter { it.isBuy }
+            val sellExecs = allExecutions.filter { it.isSell }
+
+            val totalBuyQty = buyExecs.sumOf { it.qtyValue }
+            val totalBuyValue = buyExecs.sumOf { it.totalValue }
+            val avgBuyPrice = if (totalBuyQty > 0.0) totalBuyValue / totalBuyQty else 0.0
+
+            val totalSellQty = sellExecs.sumOf { it.qtyValue }
+            val totalSellValue = sellExecs.sumOf { it.totalValue }
+            val avgSellPrice = if (totalSellQty > 0.0) totalSellValue / totalSellQty else 0.0
+
+            val priceDiff = if (avgBuyPrice > 0.0 && avgSellPrice > 0.0) avgSellPrice - avgBuyPrice else 0.0
+            val profitPcnt = if (avgBuyPrice > 0.0 && avgSellPrice > 0.0) (priceDiff / avgBuyPrice) * 100.0 else 0.0
+            val netQty = totalBuyQty - totalSellQty
+
+            val totalFee = allExecutions.sumOf { exec ->
+                if (exec.isBuy) {
+                    val p = if (exec.priceValue > 0.0) exec.priceValue else avgBuyPrice
+                    exec.feeValue * p
+                } else {
+                    exec.feeValue
+                }
             }
 
             return TradeAnalysisResult(
                 symbol = symbol,
-                daysRange = 365,
+                daysRange = 0,
+                dateRangeLabel = "Kayıtlı Tüm Geçmiş",
                 totalBuyQty = totalBuyQty,
                 totalBuyValue = totalBuyValue,
                 avgBuyPrice = avgBuyPrice,
-                buyTradeCount = buyTrades.size,
+                buyTradeCount = buyExecs.size,
                 totalSellQty = totalSellQty,
                 totalSellValue = totalSellValue,
                 avgSellPrice = avgSellPrice,
-                sellTradeCount = sellTrades.size,
+                sellTradeCount = sellExecs.size,
                 priceDifference = priceDiff,
                 profitPercentage = profitPcnt,
                 netQty = netQty,
                 totalFee = totalFee,
-                executions = executions,
+                executions = allExecutions.sortedByDescending { it.timeMillis },
                 fetchedAt = System.currentTimeMillis()
             )
         }
 
-        // If apiAnalysis is present and has executions, use it
+        // Fallback to apiAnalysis if provided
         if (apiAnalysis != null && apiAnalysis.executions.isNotEmpty()) {
             return apiAnalysis
         }
 
-        // Otherwise compute directly from Room orders table (which live updates with every bot trade!)
-        val filledOrders = orders.filter { it.status.equals("Filled", ignoreCase = true) }
-        val buyOrders = filledOrders.filter { it.side.equals("Buy", ignoreCase = true) }
-        val sellOrders = filledOrders.filter { it.side.equals("Sell", ignoreCase = true) }
-
-        val totalBuyQty = buyOrders.sumOf { if (it.filledQty > 0.0) it.filledQty else it.qty }
-        val totalBuyValue = buyOrders.sumOf { 
-            val q = if (it.filledQty > 0.0) it.filledQty else it.qty
-            val p = if (it.avgPrice > 0.0) it.avgPrice else it.price
-            q * p
-        }
-        val avgBuyPrice = if (totalBuyQty > 0.0) totalBuyValue / totalBuyQty else 0.0
-
-        val totalSellQty = sellOrders.sumOf { if (it.filledQty > 0.0) it.filledQty else it.qty }
-        val totalSellValue = sellOrders.sumOf { 
-            val q = if (it.filledQty > 0.0) it.filledQty else it.qty
-            val p = if (it.avgPrice > 0.0) it.avgPrice else it.price
-            q * p
-        }
-        val avgSellPrice = if (totalSellQty > 0.0) totalSellValue / totalSellQty else 0.0
-
-        val priceDiff = avgSellPrice - avgBuyPrice
-        val profitPcnt = if (avgBuyPrice > 0.0) ((avgSellPrice - avgBuyPrice) / avgBuyPrice) * 100.0 else 0.0
-        val netQty = totalBuyQty - totalSellQty
-        val totalFee = (totalBuyValue + totalSellValue) * 0.001
-
         return TradeAnalysisResult(
             symbol = symbol,
-            daysRange = 365,
-            totalBuyQty = totalBuyQty,
-            totalBuyValue = totalBuyValue,
-            avgBuyPrice = avgBuyPrice,
-            buyTradeCount = buyOrders.size,
-            totalSellQty = totalSellQty,
-            totalSellValue = totalSellValue,
-            avgSellPrice = avgSellPrice,
-            sellTradeCount = sellOrders.size,
-            priceDifference = priceDiff,
-            profitPercentage = profitPcnt,
-            netQty = netQty,
-            totalFee = totalFee,
-            executions = emptyList(),
+            daysRange = 0,
+            dateRangeLabel = "Kayıtlı Tüm Geçmiş",
             fetchedAt = System.currentTimeMillis()
         )
     }

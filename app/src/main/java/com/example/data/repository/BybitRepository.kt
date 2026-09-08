@@ -1134,6 +1134,7 @@ class BybitRepository(
     suspend fun fetchAllExecutions(
         symbol: String? = "MNTUSDT",
         daysBack: Int = 730,
+        startTimestamp: Long? = null,
         apiKey: String = preferences.apiKey,
         apiSecret: String = preferences.apiSecret,
         isTestnet: Boolean = preferences.isTestnet,
@@ -1151,15 +1152,21 @@ class BybitRepository(
 
             val nowMs = System.currentTimeMillis()
             // Clamp daysBack to 720 days (~24 months) so startTime never touches Bybit's strict 2-year (730-day) API limit
-            val safeDaysBack = daysBack.coerceIn(1, 720)
-            val targetStartMs = nowMs - (safeDaysBack.toLong() * 24L * 60L * 60L * 1000L)
+            val minAllowedMs = nowMs - (720L * 24L * 60L * 60L * 1000L)
+            val targetStartMs = if (startTimestamp != null && startTimestamp > 0L) {
+                maxOf(startTimestamp, minAllowedMs)
+            } else {
+                val safeDaysBack = daysBack.coerceIn(1, 720)
+                nowMs - (safeDaysBack.toLong() * 24L * 60L * 60L * 1000L)
+            }
+            val effectiveDays = ((nowMs - targetStartMs) / (24L * 60L * 60L * 1000L)).toInt().coerceAtLeast(1)
             // Bybit V5 requires (endTime - startTime) <= 7 days (604,800,000 ms).
             // We use 604,700,000 ms to stay safely inside the limit.
             val sevenDaysMs = 7L * 24L * 60L * 60L * 1000L - 100_000L
 
             var windowEndMs = nowMs
             var windowIndex = 0
-            val totalEstimatedWindows = ((safeDaysBack + 6) / 7).coerceAtLeast(1)
+            val totalEstimatedWindows = ((effectiveDays + 6) / 7).coerceAtLeast(1)
             var reachedHistoryLimit = false
 
             while (windowEndMs > targetStartMs && windowIndex < (totalEstimatedWindows + 3) && !reachedHistoryLimit) {
@@ -1271,10 +1278,11 @@ class BybitRepository(
                 it.execId.ifBlank { "${it.orderId}_${it.execTime}" }
             }
 
-            // Filter for genuine executed trades with valid price and volume
+            // Filter for genuine executed trades with valid price and volume and inside targetStartMs
             val validExecutions = uniqueExecutions.filter {
                 it.qtyValue > 0.0 && it.priceValue > 0.0 &&
-                        (it.execType.isBlank() || it.execType.equals("Trade", ignoreCase = true) || it.execType.equals("BlockTrade", ignoreCase = true))
+                        (it.execType.isBlank() || it.execType.equals("Trade", ignoreCase = true) || it.execType.equals("BlockTrade", ignoreCase = true)) &&
+                        it.timeMillis >= targetStartMs
             }
 
             Result.success(validExecutions)
@@ -1286,6 +1294,7 @@ class BybitRepository(
     suspend fun fetchFilledOrderHistory(
         symbol: String? = "MNTUSDT",
         daysBack: Int = 730,
+        startTimestamp: Long? = null,
         apiKey: String = preferences.apiKey,
         apiSecret: String = preferences.apiSecret,
         isTestnet: Boolean = preferences.isTestnet
@@ -1301,13 +1310,19 @@ class BybitRepository(
             val effectiveSymbol = if (symbol.isNullOrBlank() || symbol.equals("ALL", ignoreCase = true)) null else symbol.trim().uppercase()
 
             val nowMs = System.currentTimeMillis()
-            val safeDaysBack = daysBack.coerceIn(1, 720)
-            val targetStartMs = nowMs - (safeDaysBack.toLong() * 24L * 60L * 60L * 1000L)
+            val minAllowedMs = nowMs - (720L * 24L * 60L * 60L * 1000L)
+            val targetStartMs = if (startTimestamp != null && startTimestamp > 0L) {
+                maxOf(startTimestamp, minAllowedMs)
+            } else {
+                val safeDaysBack = daysBack.coerceIn(1, 720)
+                nowMs - (safeDaysBack.toLong() * 24L * 60L * 60L * 1000L)
+            }
+            val effectiveDays = ((nowMs - targetStartMs) / (24L * 60L * 60L * 1000L)).toInt().coerceAtLeast(1)
             val sevenDaysMs = 7L * 24L * 60L * 60L * 1000L - 100_000L
 
             var windowEndMs = nowMs
             var windowIndex = 0
-            val maxWindows = ((safeDaysBack / 7) + 2).coerceAtLeast(1)
+            val maxWindows = ((effectiveDays / 7) + 2).coerceAtLeast(1)
             var reachedHistoryLimit = false
 
             while (windowEndMs > targetStartMs && windowIndex < maxWindows && !reachedHistoryLimit) {
@@ -1376,19 +1391,20 @@ class BybitRepository(
     suspend fun fetchTradeAnalysis(
         symbol: String? = "MNTUSDT",
         daysBack: Int = 730,
+        startTimestamp: Long? = null,
         apiKey: String = preferences.apiKey,
         apiSecret: String = preferences.apiSecret,
         isTestnet: Boolean = preferences.isTestnet,
         onProgress: ((currentWindow: Int, totalWindows: Int, fetchedCount: Int) -> Unit)? = null
     ): Result<TradeAnalysisResult> = withContext(Dispatchers.IO) {
         try {
-            val execRes = fetchAllExecutions(symbol, daysBack, apiKey, apiSecret, isTestnet, onProgress)
+            val execRes = fetchAllExecutions(symbol, daysBack, startTimestamp, apiKey, apiSecret, isTestnet, onProgress)
             val executions = (execRes.getOrNull() ?: emptyList()).toMutableList()
 
             // If executions endpoint returned nothing or we want to ensure full coverage,
             // also query filled order history as fallback/complement
             if (executions.isEmpty()) {
-                val ordersRes = fetchFilledOrderHistory(symbol, daysBack, apiKey, apiSecret, isTestnet)
+                val ordersRes = fetchFilledOrderHistory(symbol, daysBack, startTimestamp, apiKey, apiSecret, isTestnet)
                 val filledOrders = ordersRes.getOrNull() ?: emptyList()
                 executions.addAll(filledOrders.map { order ->
                     BybitExecutionDto(
@@ -1441,9 +1457,23 @@ class BybitRepository(
             }
 
             val displaySymbol = if (symbol.isNullOrBlank() || symbol.equals("ALL", ignoreCase = true)) "Tüm Semboller" else symbol.uppercase()
+            val effectiveDays = if (startTimestamp != null && startTimestamp > 0L) {
+                val nowMs = System.currentTimeMillis()
+                ((nowMs - startTimestamp) / (24L * 60L * 60L * 1000L)).toInt().coerceAtLeast(1)
+            } else {
+                daysBack
+            }
+            val rangeLabel = if (startTimestamp != null && startTimestamp > 0L) {
+                val dateStr = java.text.SimpleDateFormat("dd.MM.yyyy", java.util.Locale.getDefault()).format(java.util.Date(startTimestamp))
+                "$dateStr Tarihinden İtibaren"
+            } else {
+                "Son $daysBack Gün"
+            }
+
             val analysis = TradeAnalysisResult(
                 symbol = displaySymbol,
-                daysRange = daysBack,
+                daysRange = effectiveDays,
+                dateRangeLabel = rangeLabel,
                 totalBuyQty = totalBuyQty,
                 totalBuyValue = totalBuyValue,
                 avgBuyPrice = avgBuyPrice,
@@ -1621,6 +1651,7 @@ class BybitRepository(
     suspend fun syncTradesFromExchange(
         symbol: String? = "MNTUSDT",
         daysBack: Int = 730,
+        startTimestamp: Long? = null,
         apiKey: String = preferences.apiKey,
         apiSecret: String = preferences.apiSecret,
         isTestnet: Boolean = preferences.isTestnet,
@@ -1633,6 +1664,7 @@ class BybitRepository(
             val fetchResult = fetchTradeAnalysis(
                 symbol = symbol,
                 daysBack = daysBack,
+                startTimestamp = startTimestamp,
                 apiKey = apiKey,
                 apiSecret = apiSecret,
                 isTestnet = isTestnet,
@@ -1722,88 +1754,15 @@ class BybitRepository(
 
             val totalInDb = exchangeTradeDao.getTradeCountSync()
 
-            // 5. Veritabanındaki tüm işlemleri okuyarak bütünleşik analizi hazırla
-            val allDbTrades = if (symbol.isNullOrBlank() || symbol.equals("ALL", ignoreCase = true)) {
-                exchangeTradeDao.getAllTradesSync()
-            } else {
-                exchangeTradeDao.getTradesBySymbolSync(symbol.uppercase().trim())
-            }
-
-            // DB'deki verilerden BybitExecutionDto listesi türet
-            val mergedExecutions = allDbTrades.map { dbTrade ->
-                BybitExecutionDto(
-                    symbol = dbTrade.symbol,
-                    orderId = dbTrade.orderId,
-                    orderLinkId = dbTrade.orderLinkId,
-                    side = dbTrade.side,
-                    orderPrice = dbTrade.orderPrice.toString(),
-                    orderQty = dbTrade.orderQty.toString(),
-                    orderType = dbTrade.orderType,
-                    execId = dbTrade.execId,
-                    execPrice = dbTrade.execPrice.toString(),
-                    execQty = dbTrade.execQty.toString(),
-                    execType = "Trade",
-                    execValue = dbTrade.execValue.toString(),
-                    execFee = dbTrade.execFee.toString(),
-                    feeRate = dbTrade.feeRate.toString(),
-                    execTime = dbTrade.timeMillis.toString(),
-                    isMaker = dbTrade.isMaker
-                )
-            }.ifEmpty {
-                remoteExecutions
-            }
-
-            val buyExecs = mergedExecutions.filter { it.isBuy }
-            val sellExecs = mergedExecutions.filter { it.isSell }
-
-            val totalBuyQty = buyExecs.sumOf { it.qtyValue }
-            val totalBuyValue = buyExecs.sumOf { it.totalValue }
-            val avgBuyPrice = if (totalBuyQty > 0.0) totalBuyValue / totalBuyQty else 0.0
-
-            val totalSellQty = sellExecs.sumOf { it.qtyValue }
-            val totalSellValue = sellExecs.sumOf { it.totalValue }
-            val avgSellPrice = if (totalSellQty > 0.0) totalSellValue / totalSellQty else 0.0
-
-            val priceDiff = if (avgBuyPrice > 0.0 && avgSellPrice > 0.0) avgSellPrice - avgBuyPrice else 0.0
-            val profitPcnt = if (avgBuyPrice > 0.0 && avgSellPrice > 0.0) (priceDiff / avgBuyPrice) * 100.0 else 0.0
-            val netQty = totalBuyQty - totalSellQty
-
-            val totalFee = mergedExecutions.sumOf { exec ->
-                if (exec.isBuy) {
-                    val p = if (exec.priceValue > 0.0) exec.priceValue else avgBuyPrice
-                    exec.feeValue * p
-                } else {
-                    exec.feeValue
-                }
-            }
-
-            val displaySymbol = if (symbol.isNullOrBlank() || symbol.equals("ALL", ignoreCase = true)) "Tüm Semboller" else symbol.uppercase()
-            val consolidatedAnalysis = TradeAnalysisResult(
-                symbol = displaySymbol,
-                daysRange = daysBack,
-                totalBuyQty = totalBuyQty,
-                totalBuyValue = totalBuyValue,
-                avgBuyPrice = avgBuyPrice,
-                buyTradeCount = buyExecs.size,
-                totalSellQty = totalSellQty,
-                totalSellValue = totalSellValue,
-                avgSellPrice = avgSellPrice,
-                sellTradeCount = sellExecs.size,
-                priceDifference = priceDiff,
-                profitPercentage = profitPcnt,
-                netQty = netQty,
-                totalFee = totalFee,
-                executions = mergedExecutions.sortedByDescending { it.timeMillis },
-                fetchedAt = System.currentTimeMillis()
-            )
-
+            // Borsa Analizi için SADECE çekilen işlemlerin analizi (remoteAnalysis) döndürülür.
+            // Böylece Borsa Analiz ekranı kullanıcının belirlediği zaman aralığını/seçilen tarihi temel alır.
             val syncResult = TradeSyncResult(
                 totalFetched = totalFetched,
                 existingInDb = existingInDbCount,
                 newlyAddedCount = newExecutions.size,
                 totalInDb = totalInDb,
                 newlyAddedTrades = newExecutions,
-                analysis = consolidatedAnalysis
+                analysis = remoteAnalysis
             )
 
             Result.success(syncResult)

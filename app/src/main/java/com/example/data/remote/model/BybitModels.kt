@@ -152,6 +152,7 @@ data class BybitExecutionDto(
 data class TradeAnalysisResult(
     val symbol: String = "MNTUSDT",
     val daysRange: Int = 365,
+    val dateRangeLabel: String = "",
     val totalBuyQty: Double = 0.0,
     val totalBuyValue: Double = 0.0,
     val avgBuyPrice: Double = 0.0,

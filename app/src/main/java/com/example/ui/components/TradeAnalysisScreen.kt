@@ -89,7 +89,13 @@ import com.example.ui.theme.MinimalSurfaceElevated
 import com.example.ui.theme.MinimalTextMuted
 import com.example.ui.theme.MinimalTextPrimary
 import com.example.ui.theme.MinimalTextSecondary
+import android.app.DatePickerDialog
+import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.CalendarToday
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.platform.LocalContext
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
@@ -98,11 +104,12 @@ fun TradeAnalysisScreen(
     state: TradeAnalysisUiState,
     isApiConfigured: Boolean,
     currentPrice: Double = 0.0,
-    onFetchAnalysis: (symbol: String?, daysBack: Int) -> Unit,
+    onFetchAnalysis: (symbol: String?, daysBack: Int, startTimestamp: Long?) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var selectedFilter by remember { mutableStateOf("ALL") } // "ALL", "BUY", "SELL"
     var selectedDaysBack by remember { mutableStateOf(730) } // Default 730 days (2 years - Bybit API maximum)
+    var selectedStartDateMillis by remember { mutableStateOf<Long?>(null) } // Custom start date chosen by user
     var selectedSymbolOption by remember { mutableStateOf("MNTUSDT") } // "MNTUSDT", "ALL", "CUSTOM"
     var customSymbolText by remember { mutableStateOf("") }
 
@@ -112,7 +119,7 @@ fun TradeAnalysisScreen(
             "CUSTOM" -> customSymbolText.trim().ifBlank { "MNTUSDT" }
             else -> "MNTUSDT"
         }
-        onFetchAnalysis(symbol, selectedDaysBack)
+        onFetchAnalysis(symbol, selectedDaysBack, selectedStartDateMillis)
     }
 
     val analysis = state.analysis
@@ -139,6 +146,8 @@ fun TradeAnalysisScreen(
                 lastFetchedAt = state.lastFetchedAt,
                 selectedDaysBack = selectedDaysBack,
                 onDaysBackChange = { selectedDaysBack = it },
+                selectedStartDateMillis = selectedStartDateMillis,
+                onStartDateChange = { selectedStartDateMillis = it },
                 selectedSymbolOption = selectedSymbolOption,
                 onSymbolOptionChange = { selectedSymbolOption = it },
                 customSymbolText = customSymbolText,
@@ -392,6 +401,7 @@ fun TradeAnalysisScreen(
                 TradeAnalysisEmptyState(
                     isApiConfigured = isApiConfigured,
                     selectedDaysBack = selectedDaysBack,
+                    selectedStartDateMillis = selectedStartDateMillis,
                     onFetchAnalysis = triggerFetch
                 )
             }
@@ -406,12 +416,16 @@ private fun TradeAnalysisHeaderCard(
     lastFetchedAt: Long,
     selectedDaysBack: Int,
     onDaysBackChange: (Int) -> Unit,
+    selectedStartDateMillis: Long? = null,
+    onStartDateChange: (Long?) -> Unit = {},
     selectedSymbolOption: String,
     onSymbolOptionChange: (String) -> Unit,
     customSymbolText: String,
     onCustomSymbolTextChange: (String) -> Unit,
     onFetchAnalysis: () -> Unit
 ) {
+    val context = LocalContext.current
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -469,8 +483,14 @@ private fun TradeAnalysisHeaderCard(
                     shape = RoundedCornerShape(999.dp),
                     color = MinimalSecondaryLight
                 ) {
+                    val pillLabel = if (selectedStartDateMillis != null) {
+                        val dateFormatted = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date(selectedStartDateMillis))
+                        "$dateFormatted İtibaren"
+                    } else {
+                        "$selectedDaysBack Gün"
+                    }
                     Text(
-                        text = "$selectedDaysBack Gün",
+                        text = pillLabel,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         color = MinimalSecondary,
@@ -525,10 +545,11 @@ private fun TradeAnalysisHeaderCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 rangeOptions.forEach { (days, label) ->
-                    val isSelected = selectedDaysBack == days
+                    val isSelected = selectedStartDateMillis == null && selectedDaysBack == days
                     Surface(
                         shape = RoundedCornerShape(8.dp),
                         color = if (isSelected) MinimalPrimary else MinimalSurfaceElevated,
@@ -538,7 +559,10 @@ private fun TradeAnalysisHeaderCard(
                         ),
                         modifier = Modifier
                             .clip(RoundedCornerShape(8.dp))
-                            .clickable { onDaysBackChange(days) }
+                            .clickable {
+                                onStartDateChange(null)
+                                onDaysBackChange(days)
+                            }
                     ) {
                         Text(
                             text = label,
@@ -547,6 +571,124 @@ private fun TradeAnalysisHeaderCard(
                             color = if (isSelected) Color.White else MinimalTextSecondary,
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                         )
+                    }
+                }
+
+                // Custom Date Selection Chip
+                val isCustomDate = selectedStartDateMillis != null
+                val customChipLabel = if (isCustomDate) {
+                    val dateFormatted = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date(selectedStartDateMillis!!))
+                    "📅 $dateFormatted'den İtibaren"
+                } else {
+                    "📅 Tarih Seç..."
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (isCustomDate) MinimalPrimary else MinimalSurfaceElevated,
+                    border = BorderStroke(
+                        1.dp,
+                        if (isCustomDate) MinimalPrimary else MinimalSurfaceBorder
+                    ),
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable {
+                            val calendar = Calendar.getInstance()
+                            if (selectedStartDateMillis != null) {
+                                calendar.timeInMillis = selectedStartDateMillis
+                            } else {
+                                calendar.add(Calendar.DAY_OF_YEAR, -selectedDaysBack)
+                            }
+                            val datePickerDialog = DatePickerDialog(
+                                context,
+                                { _, year, month, dayOfMonth ->
+                                    val pickedCal = Calendar.getInstance().apply {
+                                        set(Calendar.YEAR, year)
+                                        set(Calendar.MONTH, month)
+                                        set(Calendar.DAY_OF_MONTH, dayOfMonth)
+                                        set(Calendar.HOUR_OF_DAY, 0)
+                                        set(Calendar.MINUTE, 0)
+                                        set(Calendar.SECOND, 0)
+                                        set(Calendar.MILLISECOND, 0)
+                                    }
+                                    val pickedMs = pickedCal.timeInMillis
+                                    onStartDateChange(pickedMs)
+                                    val nowMs = System.currentTimeMillis()
+                                    val calculatedDays = ((nowMs - pickedMs) / (24L * 60L * 60L * 1000L)).toInt().coerceAtLeast(1)
+                                    onDaysBackChange(calculatedDays)
+                                },
+                                calendar.get(Calendar.YEAR),
+                                calendar.get(Calendar.MONTH),
+                                calendar.get(Calendar.DAY_OF_MONTH)
+                            )
+                            datePickerDialog.datePicker.maxDate = System.currentTimeMillis()
+                            val minMs = System.currentTimeMillis() - (720L * 24L * 60L * 60L * 1000L)
+                            datePickerDialog.datePicker.minDate = minMs
+                            datePickerDialog.show()
+                        }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = customChipLabel,
+                            fontSize = 11.sp,
+                            fontWeight = if (isCustomDate) FontWeight.Bold else FontWeight.SemiBold,
+                            color = if (isCustomDate) Color.White else MinimalPrimary
+                        )
+                    }
+                }
+            }
+
+            // Notice banner when custom start date is active
+            if (selectedStartDateMillis != null) {
+                val dateFormatted = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date(selectedStartDateMillis))
+                Spacer(modifier = Modifier.height(10.dp))
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MinimalPrimaryLight.copy(alpha = 0.6f),
+                    border = BorderStroke(1.dp, MinimalPrimary.copy(alpha = 0.35f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                            Icon(
+                                Icons.Default.CalendarToday,
+                                contentDescription = null,
+                                tint = MinimalPrimary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                Text(
+                                    text = "Başlangıç: $dateFormatted ($selectedDaysBack gün öncesi)",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MinimalTextPrimary
+                                )
+                                Text(
+                                    text = "Bu tarihten bugüne kadar gerçekleşen işlemler çekilecektir.",
+                                    fontSize = 11.sp,
+                                    color = MinimalTextSecondary
+                                )
+                            }
+                        }
+                        TextButton(
+                            onClick = { onStartDateChange(null) },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = "Kaldır",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MinimalErrorDark
+                            )
+                        }
                     }
                 }
             }
@@ -636,7 +778,7 @@ private fun TradeAnalysisHeaderCard(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Bybit V5 borsa API'si en fazla 2 yıllık (730 gün) geçmişi saklar ve sorgulamaya izin verir. 2 yıldan daha eski veriler borsa tarafından API'den arşive kaldırıldığından yalnızca Bybit web sitesindeki Emir Geçmişi > Dışa Aktar (CSV) bölümünden indirilebilir. Uygulama, seçtiğiniz $selectedDaysBack günlük süreyi 7'şer günlük pencerelerle geriye doğru tarayarak tüm işlemlerinizi eksiksiz birleştirir.",
+                        text = "Bybit V5 borsa API'si en fazla 2 yıllık (730 gün) geçmişi saklar ve sorgulamaya izin verir. 2 yıldan daha eski veriler borsa tarafından API'den arşive kaldırıldığından yalnızca Bybit web sitesindeki Emir Geçmişi > Dışa Aktar (CSV) bölümünden indirilebilir. Uygulama, seçtiğiniz süreyi 7'şer günlük pencerelerle geriye doğru tarayarak tüm işlemlerinizi eksiksiz birleştirir.",
                         fontSize = 11.sp,
                         color = MinimalTextPrimary,
                         lineHeight = 15.sp
@@ -669,6 +811,30 @@ private fun TradeAnalysisHeaderCard(
 
             Spacer(modifier = Modifier.height(14.dp))
 
+            val dateFormatted = if (selectedStartDateMillis != null) {
+                SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date(selectedStartDateMillis))
+            } else null
+
+            val buttonLabel = if (dateFormatted != null) {
+                if (lastFetchedAt > 0) {
+                    "Verileri Yeniden Çek ($dateFormatted Tarihinden İtibaren)"
+                } else {
+                    "Verileri Çek ($dateFormatted Tarihinden İtibaren)"
+                }
+            } else {
+                if (lastFetchedAt > 0) {
+                    "Verileri Yeniden Çek ve Senkronize Et ($selectedDaysBack Gün)"
+                } else {
+                    "Verileri Çek ve Veritabanına Kaydet ($selectedDaysBack Gün)"
+                }
+            }
+
+            val loadingLabel = if (dateFormatted != null) {
+                "Borsadan $dateFormatted Tarihinden İtibaren Taranıyor..."
+            } else {
+                "Borsadan $selectedDaysBack Günlük Veri Taranıyor..."
+            }
+
             Button(
                 onClick = onFetchAnalysis,
                 enabled = !isLoading && isApiConfigured,
@@ -691,7 +857,7 @@ private fun TradeAnalysisHeaderCard(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Borsadan $selectedDaysBack Günlük Veri Taranıyor...",
+                        text = loadingLabel,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 13.sp,
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center
@@ -708,11 +874,7 @@ private fun TradeAnalysisHeaderCard(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = if (lastFetchedAt > 0) {
-                                "Verileri Yeniden Çek ve Senkronize Et ($selectedDaysBack Gün)"
-                            } else {
-                                "Verileri Çek ve Veritabanına Kaydet ($selectedDaysBack Gün)"
-                            },
+                            text = buttonLabel,
                             fontWeight = FontWeight.Bold,
                             fontSize = 13.sp,
                             lineHeight = 17.sp,
@@ -755,8 +917,15 @@ fun TradeAveragesOverview(
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
+                        val rangeTitle = if (analysis.dateRangeLabel.isNotBlank()) {
+                            analysis.dateRangeLabel
+                        } else if (analysis.daysRange > 0) {
+                            "Son ${analysis.daysRange} Gün"
+                        } else {
+                            "Kayıtlı Tüm Geçmiş"
+                        }
                         Text(
-                            text = "${analysis.symbol} • Son ${analysis.daysRange} Gün",
+                            text = "${analysis.symbol} • $rangeTitle",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             color = MinimalTextPrimary,
@@ -1609,6 +1778,7 @@ private fun ExecutionItemCard(exec: BybitExecutionDto) {
 private fun TradeAnalysisEmptyState(
     isApiConfigured: Boolean,
     selectedDaysBack: Int,
+    selectedStartDateMillis: Long? = null,
     onFetchAnalysis: () -> Unit
 ) {
     Card(
@@ -1647,12 +1817,19 @@ private fun TradeAnalysisEmptyState(
                 color = MinimalTextPrimary
             )
 
-            Text(
-                text = if (isApiConfigured) {
-                    "Bybit hesabınızdaki $selectedDaysBack günlük tüm alım ve satım geçmişini getirerek ortalama alış fiyatını, ortalama satış fiyatını ve net miktarları görmek için butona tıklayın."
+            val descText = if (isApiConfigured) {
+                if (selectedStartDateMillis != null) {
+                    val dateFormatted = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date(selectedStartDateMillis))
+                    "Bybit hesabınızdaki $dateFormatted tarihinden itibaren gerçekleşen tüm alım ve satım işlemlerini çekerek ortalama alış fiyatını, ortalama satış fiyatını ve net kâr/zarar durumunu görmek için butona tıklayın."
                 } else {
-                    "Geçmiş verilerini çekebilmek için lütfen önce Ayarlar menüsünden Bybit API anahtarlarınızı girin."
-                },
+                    "Bybit hesabınızdaki $selectedDaysBack günlük tüm alım ve satım geçmişini getirerek ortalama alış fiyatını, ortalama satış fiyatını ve net miktarları görmek için butona tıklayın."
+                }
+            } else {
+                "Geçmiş verilerini çekebilmek için lütfen önce Ayarlar menüsünden Bybit API anahtarlarınızı girin."
+            }
+
+            Text(
+                text = descText,
                 fontSize = 13.sp,
                 color = MinimalTextSecondary,
                 modifier = Modifier.padding(top = 8.dp, bottom = 20.dp),

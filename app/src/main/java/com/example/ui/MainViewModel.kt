@@ -94,13 +94,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val liveAnalysis: StateFlow<TradeAnalysisResult?> = combine(
         orders,
-        repository.getAllExchangeTradesFlow(),
-        _tradeAnalysis
-    ) { orderList, tradeList, analysisUiState ->
+        repository.getAllExchangeTradesFlow()
+    ) { orderList, tradeList ->
         RebalanceEngine.computeLiveTradeAnalysis(
             orders = orderList,
-            exchangeTrades = tradeList,
-            apiAnalysis = analysisUiState.analysis
+            exchangeTrades = tradeList
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
@@ -608,7 +606,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val exchangeTrades: StateFlow<List<ExchangeTradeEntity>> = repository.getAllExchangeTradesFlow()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    fun fetchTradeAnalysis(symbol: String? = "MNTUSDT", daysBack: Int = 730) {
+    fun fetchTradeAnalysis(symbol: String? = "MNTUSDT", daysBack: Int = 730, startTimestamp: Long? = null) {
         viewModelScope.launch {
             _tradeAnalysis.update {
                 it.copy(
@@ -621,6 +619,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val result = repository.syncTradesFromExchange(
                 symbol = symbol,
                 daysBack = daysBack,
+                startTimestamp = startTimestamp,
                 onProgress = { currentWindow, totalWindows, fetchedCount ->
                     _tradeAnalysis.update {
                         it.copy(progressText = "$currentWindow / $totalWindows hafta tarandı ($fetchedCount işlem)")
