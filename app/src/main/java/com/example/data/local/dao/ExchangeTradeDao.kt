@@ -43,6 +43,9 @@ interface ExchangeTradeDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertTrade(trade: ExchangeTradeEntity): Long
 
+    @Query("DELETE FROM exchange_trades WHERE orderId = :orderId")
+    suspend fun deleteTradeByOrderId(orderId: String)
+
     @Query("DELETE FROM exchange_trades")
     suspend fun clearAllTrades()
 

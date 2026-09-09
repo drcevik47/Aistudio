@@ -283,6 +283,7 @@ class TradingBotService : Service() {
             )
 
             // Immediately mark order as Filled in Room DB so UI updates instantly
+            val fillTime = if (order.updatedTimeMillis > 0L) order.updatedTimeMillis else System.currentTimeMillis()
             val fillPrice = if (order.avgPriceValue > 0.0) order.avgPriceValue else order.priceValue
             val fillQty = if (order.filledQtyValue > 0.0) order.filledQtyValue else order.qtyValue
             repository.recordOrderFilled(
@@ -290,7 +291,8 @@ class TradingBotService : Service() {
                 side = order.side,
                 price = fillPrice,
                 qty = fillQty,
-                triggerReason = if (order.side.equals("Buy", ignoreCase = true)) "GridStepDownBuy" else "GridStepUpSell"
+                triggerReason = if (order.side.equals("Buy", ignoreCase = true)) "GridStepDownBuy" else "GridStepUpSell",
+                fillTime = fillTime
             )
 
             repository.reconcileGridOrders(callerTag = "WebSocket")

@@ -19,6 +19,9 @@ interface OrderDao {
     @Query("SELECT * FROM orders WHERE status = 'Filled' ORDER BY timestamp DESC LIMIT 1")
     suspend fun getLastFilledOrder(): OrderEntity?
 
+    @Query("SELECT * FROM orders WHERE status = 'Filled' ORDER BY timestamp DESC LIMIT :limit")
+    suspend fun getRecentFilledOrdersList(limit: Int = 50): List<OrderEntity>
+
     @Query("SELECT * FROM orders WHERE orderId = :orderId LIMIT 1")
     suspend fun getOrderByOrderId(orderId: String): OrderEntity?
 
@@ -31,8 +34,8 @@ interface OrderDao {
     @Update
     suspend fun updateOrder(order: OrderEntity)
 
-    @Query("UPDATE orders SET status = :status, filledQty = :filledQty, avgPrice = :avgPrice WHERE orderId = :orderId")
-    suspend fun updateOrderStatus(orderId: String, status: String, filledQty: Double, avgPrice: Double)
+    @Query("UPDATE orders SET status = :status, filledQty = :filledQty, avgPrice = :avgPrice, timestamp = :fillTime WHERE orderId = :orderId")
+    suspend fun updateOrderStatus(orderId: String, status: String, filledQty: Double, avgPrice: Double, fillTime: Long = System.currentTimeMillis())
 
     @Query("DELETE FROM orders WHERE orderId = :orderId")
     suspend fun deleteOrder(orderId: String)

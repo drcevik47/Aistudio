@@ -745,12 +745,16 @@ class BybitRepository(
 
                 // 3. Record filled trade in Room database ONLY if genuinely filled
                 if (!isCancelledWithoutFill && (filledOrder != null || filledExec != null || execQty > 0.0 || missingOrderId.isNotBlank())) {
+                    val fillTime = filledOrder?.updatedTimeMillis?.takeIf { it > 0L }
+                        ?: filledExec?.timeMillis?.takeIf { it > 0L }
+                        ?: System.currentTimeMillis()
                     recordOrderFilled(
                         orderId = execOrderId,
                         side = missingSide,
                         price = finalExecPrice,
                         qty = execQty,
-                        triggerReason = if (missingSide.equals("Buy", ignoreCase = true)) "GridStepDownBuy" else "GridStepUpSell"
+                        triggerReason = if (missingSide.equals("Buy", ignoreCase = true)) "GridStepDownBuy" else "GridStepUpSell",
+                        fillTime = fillTime
                     )
                 }
 
@@ -1508,16 +1512,19 @@ class BybitRepository(
         side: String,
         price: Double,
         qty: Double = 0.0,
-        triggerReason: String = ""
+        triggerReason: String = "",
+        fillTime: Long = System.currentTimeMillis()
     ) = withContext(Dispatchers.IO) {
         try {
+            val effectiveTime = if (fillTime > 0L) fillTime else System.currentTimeMillis()
             val existing = orderDao.getOrderByOrderId(orderId)
             if (existing != null) {
                 orderDao.updateOrderStatus(
                     orderId = orderId,
                     status = "Filled",
                     filledQty = if (qty > 0.0) qty else existing.qty,
-                    avgPrice = if (price > 0.0) price else existing.price
+                    avgPrice = if (price > 0.0) price else existing.price,
+                    fillTime = effectiveTime
                 )
             } else {
                 orderDao.insertOrder(
@@ -1530,6 +1537,7 @@ class BybitRepository(
                         status = "Filled",
                         filledQty = qty,
                         avgPrice = price,
+                        timestamp = effectiveTime,
                         triggerReason = triggerReason
                     )
                 )
@@ -1545,7 +1553,7 @@ class BybitRepository(
                     val execValue = execPrice * execQty
                     val execFee = execValue * 0.001
                     // Deterministic execId based on orderId to prevent duplicate insertions even with concurrent calls
-                    val execId = if (orderId.isNotBlank()) "fill_$orderId" else "fill_${System.currentTimeMillis()}"
+                    val execId = if (orderId.isNotBlank()) "fill_$orderId" else "fill_$effectiveTime"
                     exchangeTradeDao.insertTrade(
                         ExchangeTradeEntity(
                             execId = execId,
@@ -1559,7 +1567,7 @@ class BybitRepository(
                             execQty = execQty,
                             execValue = execValue,
                             execFee = execFee,
-                            timeMillis = System.currentTimeMillis(),
+                            timeMillis = effectiveTime,
                             isMaker = true
                         )
                     )
@@ -1575,39 +1583,52 @@ class BybitRepository(
     suspend fun syncUnfilledOrdersWithExchange(): Result<Unit> = withContext(Dispatchers.IO) {
         try {
             if (!preferences.isConfigured) return@withContext Result.success(Unit)
-            val openOrdersInDb = orderDao.getOpenOrdersFromDb()
-            if (openOrdersInDb.isEmpty()) return@withContext Result.success(Unit)
 
-            // Get current active open orders directly from Bybit
+            // 1. Get current active open orders directly from Bybit
             val liveOpenOrdersRes = getOpenOrders()
             val liveOpenOrders = liveOpenOrdersRes.getOrDefault(emptyList())
             val liveOpenOrderIds = liveOpenOrders.map { it.orderId }.toSet()
 
-            // Fetch recent orders from Bybit to see if missing orders are Filled
-            val recentOrdersRes = getRecentOrdersList(limit = 30)
+            // 2. Fetch recent orders from Bybit (limit = 50)
+            val recentOrdersRes = getRecentOrdersList(limit = 50)
             val recentOrders = recentOrdersRes.getOrDefault(emptyList()).associateBy { it.orderId }
 
+            // 3. Clean up any ghost filled orders (orders marked as Filled locally but actually Cancelled on exchange)
+            cleanupGhostFilledOrders(recentOrders)
+
+            val openOrdersInDb = orderDao.getOpenOrdersFromDb()
+            if (openOrdersInDb.isEmpty()) return@withContext Result.success(Unit)
+
             for (dbOrder in openOrdersInDb) {
-                // If it is currently open on exchange, leave it as New
+                // If it is currently open on exchange, leave it as New/PartiallyFilled
                 if (liveOpenOrderIds.contains(dbOrder.orderId)) {
                     continue
                 }
 
-                // It is not in Bybit's open orders. Let's see what happened to it
-                val exOrder = recentOrders[dbOrder.orderId]
+                // It is not in Bybit's open orders. Check what happened to it
+                var exOrder = recentOrders[dbOrder.orderId]
+                if (exOrder == null && dbOrder.orderId.isNotBlank()) {
+                    // Query single order status from Bybit directly
+                    exOrder = getOrderHistory(dbOrder.orderId).getOrNull()
+                }
+
                 if (exOrder != null) {
                     if (exOrder.isFilled || exOrder.filledQtyValue > 0.0) {
+                        val fillPrice = if (exOrder.avgPriceValue > 0.0) exOrder.avgPriceValue else dbOrder.price
+                        val fillQty = if (exOrder.filledQtyValue > 0.0) exOrder.filledQtyValue else dbOrder.qty
+                        val fillTime = if (exOrder.updatedTimeMillis > 0L) exOrder.updatedTimeMillis else System.currentTimeMillis()
                         log(
                             LogLevel.SUCCESS,
                             "OrderSync",
-                            "Açık görünen emir borsada GERÇEKLEŞMİŞ olarak güncellendi: ${dbOrder.side} ${dbOrder.orderId} @ ${exOrder.avgPriceValue}"
+                            "Açık görünen emir borsada GERÇEKLEŞMİŞ olarak güncellendi: ${dbOrder.side} ${dbOrder.orderId} @ $fillPrice"
                         )
                         recordOrderFilled(
                             orderId = dbOrder.orderId,
                             side = dbOrder.side,
-                            price = if (exOrder.avgPriceValue > 0.0) exOrder.avgPriceValue else dbOrder.price,
-                            qty = if (exOrder.filledQtyValue > 0.0) exOrder.filledQtyValue else dbOrder.qty,
-                            triggerReason = dbOrder.triggerReason
+                            price = fillPrice,
+                            qty = fillQty,
+                            triggerReason = dbOrder.triggerReason,
+                            fillTime = fillTime
                         )
                     } else if (exOrder.orderStatus.equals("Cancelled", ignoreCase = true) ||
                         exOrder.orderStatus.equals("Deactivated", ignoreCase = true)) {
@@ -1615,21 +1636,14 @@ class BybitRepository(
                         orderDao.deleteOrder(dbOrder.orderId)
                     }
                 } else {
-                    // Not found in recent orders or open orders.
-                    // If this order is older than 45 seconds and neither activeBuyOrderId nor activeSellOrderId,
-                    // it was executed or replaced by newer grid steps.
-                    val isOlder = System.currentTimeMillis() - dbOrder.timestamp > 45_000L
+                    // Not found in open orders AND not found in order history.
+                    // This means the order was cancelled, deactivated, or no longer exists on exchange.
+                    // CRITICAL: NEVER mark an order as Filled without proof from exchange!
                     val isNotActiveGrid = dbOrder.orderId != preferences.activeBuyOrderId &&
                             dbOrder.orderId != preferences.activeSellOrderId
-                    if (isOlder && isNotActiveGrid) {
-                        log(LogLevel.INFO, "OrderSync", "Geçmiş açık emir gerçekleşti olarak işaretleniyor: ${dbOrder.side} ${dbOrder.orderId}")
-                        recordOrderFilled(
-                            orderId = dbOrder.orderId,
-                            side = dbOrder.side,
-                            price = dbOrder.price,
-                            qty = dbOrder.qty,
-                            triggerReason = dbOrder.triggerReason
-                        )
+                    if (isNotActiveGrid) {
+                        log(LogLevel.INFO, "OrderSync", "Borsada bulunmayan eski emir temizlendi: ${dbOrder.side} ${dbOrder.orderId}")
+                        orderDao.deleteOrder(dbOrder.orderId)
                     }
                 }
             }
@@ -1637,6 +1651,45 @@ class BybitRepository(
         } catch (e: Exception) {
             log(LogLevel.WARN, "OrderSync", "Açık emir senkronizasyon hatası: ${e.message}")
             Result.failure(e)
+        }
+    }
+
+    /**
+     * Cross-checks locally marked 'Filled' orders against exchange recent orders.
+     * If an order was locally marked 'Filled' (e.g. by legacy sync assumption) but was actually
+     * Cancelled/Deactivated on Bybit with 0 filled quantity, it is safely deleted from local DB.
+     * Also updates fill timestamps of genuine filled orders to match exchange execution times.
+     */
+    private suspend fun cleanupGhostFilledOrders(recentOrders: Map<String, BybitOrderDto>) {
+        try {
+            val localFilled = orderDao.getRecentFilledOrdersList(limit = 50)
+            for (order in localFilled) {
+                val exOrder = recentOrders[order.orderId]
+                if (exOrder != null) {
+                    if ((exOrder.isCancelled || exOrder.orderStatus.equals("Deactivated", ignoreCase = true)) &&
+                        exOrder.filledQtyValue == 0.0) {
+                        log(
+                            LogLevel.WARN,
+                            "OrderSync",
+                            "Borsada gerçekleşmemiş (İptal edilmiş) sahte işlem geçmişten kaldırıldı: ${order.side} ${order.orderId}"
+                        )
+                        orderDao.deleteOrder(order.orderId)
+                        exchangeTradeDao.deleteTradeByOrderId(order.orderId)
+                    } else if (exOrder.isFilled && exOrder.updatedTimeMillis > 0L &&
+                        Math.abs(order.timestamp - exOrder.updatedTimeMillis) > 60_000L) {
+                        // Align local timestamp with actual fill time on exchange so sorting is accurate
+                        orderDao.updateOrderStatus(
+                            orderId = order.orderId,
+                            status = "Filled",
+                            filledQty = if (exOrder.filledQtyValue > 0.0) exOrder.filledQtyValue else order.filledQty,
+                            avgPrice = if (exOrder.avgPriceValue > 0.0) exOrder.avgPriceValue else order.avgPrice,
+                            fillTime = exOrder.updatedTimeMillis
+                        )
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            // Non-blocking cleanup
         }
     }
 

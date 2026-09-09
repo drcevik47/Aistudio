@@ -236,4 +236,6 @@ data class BybitOrderDto(
     val isFilled: Boolean get() = orderStatus.equals("Filled", ignoreCase = true)
     val isCancelled: Boolean get() = orderStatus.equals("Cancelled", ignoreCase = true) || orderStatus.equals("Deactivated", ignoreCase = true)
     val isActive: Boolean get() = orderStatus.equals("New", ignoreCase = true) || orderStatus.equals("PartiallyFilled", ignoreCase = true)
+    val createdTimeMillis: Long get() = createdTime.toLongOrNull() ?: 0L
+    val updatedTimeMillis: Long get() = updatedTime.toLongOrNull() ?: 0L
 }
