@@ -113,6 +113,7 @@ fun DashboardScreen(
     val logs by viewModel.logs.collectAsStateWithLifecycle()
     val tradeAnalysisState by viewModel.tradeAnalysis.collectAsStateWithLifecycle()
     val liveAnalysis by viewModel.liveAnalysis.collectAsStateWithLifecycle()
+    val exchangeTrades by viewModel.exchangeTrades.collectAsStateWithLifecycle()
 
     var selectedTab by remember { mutableIntStateOf(0) }
     var showSettingsDialog by remember { mutableStateOf(false) }
@@ -476,6 +477,7 @@ fun DashboardScreen(
                 2 -> {
                     OrderHistoryScreen(
                         orders = orders,
+                        exchangeTrades = exchangeTrades,
                         liveAnalysis = liveAnalysis,
                         currentPrice = state.currentPrice,
                         onClearOrders = { viewModel.clearOrders() }

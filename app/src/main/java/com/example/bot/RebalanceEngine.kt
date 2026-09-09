@@ -4,6 +4,8 @@ import com.example.data.local.entity.ExchangeTradeEntity
 import com.example.data.local.entity.OrderEntity
 import com.example.data.remote.model.BybitExecutionDto
 import com.example.data.remote.model.TradeAnalysisResult
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 import kotlin.math.abs
 
@@ -256,7 +258,8 @@ object RebalanceEngine {
         orders: List<OrderEntity>,
         exchangeTrades: List<ExchangeTradeEntity> = emptyList(),
         apiAnalysis: TradeAnalysisResult? = null,
-        symbol: String = "MNTUSDT"
+        symbol: String = "MNTUSDT",
+        startTimestamp: Long? = null
     ): TradeAnalysisResult {
         // Collect all distinct registered executions from exchangeTrades and orders
         val allExecutions = mutableListOf<BybitExecutionDto>()
@@ -316,9 +319,27 @@ object RebalanceEngine {
             }
         }
 
-        if (allExecutions.isNotEmpty()) {
-            val buyExecs = allExecutions.filter { it.isBuy }
-            val sellExecs = allExecutions.filter { it.isSell }
+        val rangeLabel = if (startTimestamp != null && startTimestamp > 0L) {
+            val dateStr = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date(startTimestamp))
+            "$dateStr Tarihinden İtibaren"
+        } else {
+            "Kayıtlı Tüm Geçmiş"
+        }
+        val calculatedDaysRange = if (startTimestamp != null && startTimestamp > 0L) {
+            ((System.currentTimeMillis() - startTimestamp) / (24L * 3600L * 1000L)).toInt().coerceAtLeast(1)
+        } else {
+            0
+        }
+
+        val activeExecutions = allExecutions.filter { exec ->
+            val timeMatch = startTimestamp == null || startTimestamp <= 0L || exec.timeMillis >= startTimestamp
+            val symbolMatch = symbol.isBlank() || symbol.equals("ALL", ignoreCase = true) || exec.symbol.equals(symbol, ignoreCase = true)
+            timeMatch && symbolMatch
+        }
+
+        if (activeExecutions.isNotEmpty()) {
+            val buyExecs = activeExecutions.filter { it.isBuy }
+            val sellExecs = activeExecutions.filter { it.isSell }
 
             val totalBuyQty = buyExecs.sumOf { it.qtyValue }
             val totalBuyValue = buyExecs.sumOf { it.totalValue }
@@ -332,7 +353,7 @@ object RebalanceEngine {
             val profitPcnt = if (avgBuyPrice > 0.0 && avgSellPrice > 0.0) (priceDiff / avgBuyPrice) * 100.0 else 0.0
             val netQty = totalBuyQty - totalSellQty
 
-            val totalFee = allExecutions.sumOf { exec ->
+            val totalFee = activeExecutions.sumOf { exec ->
                 if (exec.isBuy) {
                     val p = if (exec.priceValue > 0.0) exec.priceValue else avgBuyPrice
                     exec.feeValue * p
@@ -343,8 +364,8 @@ object RebalanceEngine {
 
             return TradeAnalysisResult(
                 symbol = symbol,
-                daysRange = 0,
-                dateRangeLabel = "Kayıtlı Tüm Geçmiş",
+                daysRange = calculatedDaysRange,
+                dateRangeLabel = rangeLabel,
                 totalBuyQty = totalBuyQty,
                 totalBuyValue = totalBuyValue,
                 avgBuyPrice = avgBuyPrice,
@@ -357,20 +378,20 @@ object RebalanceEngine {
                 profitPercentage = profitPcnt,
                 netQty = netQty,
                 totalFee = totalFee,
-                executions = allExecutions.sortedByDescending { it.timeMillis },
+                executions = activeExecutions.sortedByDescending { it.timeMillis },
                 fetchedAt = System.currentTimeMillis()
             )
         }
 
-        // Fallback to apiAnalysis if provided
-        if (apiAnalysis != null && apiAnalysis.executions.isNotEmpty()) {
+        // Fallback to apiAnalysis if provided and no activeExecutions found (and no date filter was set)
+        if (startTimestamp == null && apiAnalysis != null && apiAnalysis.executions.isNotEmpty()) {
             return apiAnalysis
         }
 
         return TradeAnalysisResult(
             symbol = symbol,
-            daysRange = 0,
-            dateRangeLabel = "Kayıtlı Tüm Geçmiş",
+            daysRange = calculatedDaysRange,
+            dateRangeLabel = rangeLabel,
             fetchedAt = System.currentTimeMillis()
         )
     }
