@@ -1842,7 +1842,8 @@ class BybitRepository(
 
     suspend fun clearLocalExchangeTrades() = withContext(Dispatchers.IO) {
         exchangeTradeDao.clearAllTrades()
-        log(LogLevel.INFO, "TradeSync", "Yerel borsa işlem geçmişi veritabanı temizlendi")
+        orderDao.deleteFilledOrders()
+        log(LogLevel.INFO, "TradeSync", "Yerel borsa işlem geçmişi ve dolmuş emir kayıtları temizlendi")
     }
 
     fun getAllExchangeTradesFlow() = exchangeTradeDao.getAllTrades()

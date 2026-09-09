@@ -43,6 +43,9 @@ interface OrderDao {
     @Query("DELETE FROM orders WHERE status != 'Filled'")
     suspend fun deleteUnfilledOrders()
 
+    @Query("DELETE FROM orders WHERE status = 'Filled'")
+    suspend fun deleteFilledOrders()
+
     @Query("DELETE FROM orders")
     suspend fun clearAllOrders()
 }
