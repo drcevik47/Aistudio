@@ -618,6 +618,12 @@ fun CalculateTradesDialog(
 
                         // Özel Tarih Seçici Çipi
                         val isCustomSelected = selectedDaysOption == -1
+                        val customChipText = if (isCustomSelected && selectedStartDateMillis != null) {
+                            val dStr = SimpleDateFormat("dd.MM.yy", Locale.getDefault()).format(Date(selectedStartDateMillis!!))
+                            "📅 $dStr"
+                        } else {
+                            "📅 Özel Tarih..."
+                        }
                         Surface(
                             shape = RoundedCornerShape(8.dp),
                             color = if (isCustomSelected) MinimalPrimary else MinimalSurfaceElevated,
@@ -657,7 +663,7 @@ fun CalculateTradesDialog(
                                 }
                         ) {
                             Text(
-                                text = "📅 Özel Tarih...",
+                                text = customChipText,
                                 fontSize = 11.sp,
                                 fontWeight = if (isCustomSelected) FontWeight.Bold else FontWeight.SemiBold,
                                 color = if (isCustomSelected) Color.White else MinimalPrimary,

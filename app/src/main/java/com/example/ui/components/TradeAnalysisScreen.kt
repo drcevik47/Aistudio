@@ -1741,6 +1741,14 @@ private fun ExecutionItemCard(exec: BybitExecutionDto) {
                     )
                 }
 
+                val baseAsset = if (exec.symbol.endsWith("USDT", ignoreCase = true)) {
+                    exec.symbol.substring(0, exec.symbol.length - 4).uppercase(Locale.getDefault())
+                } else if (exec.symbol.isNotBlank()) {
+                    exec.symbol
+                } else {
+                    "MNT"
+                }
+
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
                         text = "İşlem Miktarı",
@@ -1748,7 +1756,7 @@ private fun ExecutionItemCard(exec: BybitExecutionDto) {
                         color = MinimalTextSecondary
                     )
                     Text(
-                        text = String.format(Locale.US, "%.2f MNT", exec.qtyValue),
+                        text = String.format(Locale.US, "%.2f %s", exec.qtyValue, baseAsset),
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 13.sp,
                         color = MinimalTextPrimary
@@ -1838,6 +1846,12 @@ private fun TradeAnalysisEmptyState(
             )
 
             if (isApiConfigured) {
+                val buttonText = if (selectedStartDateMillis != null) {
+                    val dateFormatted = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date(selectedStartDateMillis))
+                    "İşlem Geçmişini Şimdi Çek ($dateFormatted İtibaren)"
+                } else {
+                    "İşlem Geçmişini Şimdi Çek ($selectedDaysBack Gün)"
+                }
                 Button(
                     onClick = onFetchAnalysis,
                     shape = RoundedCornerShape(12.dp),
@@ -1849,7 +1863,7 @@ private fun TradeAnalysisEmptyState(
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("İşlem Geçmişini Şimdi Çek ($selectedDaysBack Gün)", fontWeight = FontWeight.Bold)
+                    Text(buttonText, fontWeight = FontWeight.Bold)
                 }
             }
         }
