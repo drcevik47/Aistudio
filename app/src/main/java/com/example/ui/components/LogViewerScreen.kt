@@ -79,6 +79,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.local.entity.LogEntity
@@ -569,12 +570,12 @@ private fun ShareLogsBottomSheetContent(
         )
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Seçenek A: Tüm Logları TXT Dosyası Olarak Paylaş (.txt)
+        // Seçenek A: Tüm Logları TXT Dosyası Olarak Paylaş
         ShareActionCard(
-            title = "Tüm Logları TXT Dosyası Olarak Paylaş (.txt)",
+            title = "Tüm Logları TXT Olarak Paylaş",
             subtitle = "Sınırsız satır • Yapay zeka sohbetine doğrudan dosya olarak yükleyin (${logs.size} satır)",
             icon = Icons.Default.Description,
-            badge = "En İyi Seçenek",
+            badge = "Önerilen",
             badgeColor = MinimalPrimary,
             trailingIcon = Icons.Default.FileUpload,
             isPrimaryHighlight = true,
@@ -585,9 +586,9 @@ private fun ShareLogsBottomSheetContent(
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        // Seçenek B: Hata ve Teşhis Raporunu TXT Dosyası Olarak Paylaş (.txt)
+        // Seçenek B: Hata ve Teşhis Raporunu TXT Dosyası Olarak Paylaş
         ShareActionCard(
-            title = "Hata Raporunu TXT Dosyası Olarak Paylaş (${errorLogs.size} Kayıt)",
+            title = "Hata Raporunu TXT Olarak Paylaş (${errorLogs.size})",
             subtitle = "Sadece ERROR ve WARN loglarını içeren hata teşhis dosyası (.txt)",
             icon = Icons.Default.BugReport,
             badge = "Hata Teşhis",
@@ -651,10 +652,10 @@ private fun ShareLogsBottomSheetContent(
 
         // Seçenek 3: Sadece Hatalar ve Uyarılar
         ShareActionCard(
-            title = "Sadece Hata & Uyarıları Kopyala (${errorLogs.size} Adet)",
+            title = "Sadece Hata & Uyarıları Kopyala (${errorLogs.size})",
             subtitle = "Sistemdeki aksaklık ve hata teşhisinde en kritik kayıtlar",
             icon = Icons.Default.Warning,
-            badge = "Sorun Tespiti",
+            badge = "Hata",
             badgeColor = MinimalError,
             onClick = {
                 val text = formatLogsForSharing(
@@ -670,7 +671,7 @@ private fun ShareLogsBottomSheetContent(
 
         // Seçenek 4: Şu anki filtrelenmiş görünüm
         ShareActionCard(
-            title = "Filtrelenen Logları Kopyala ($selectedFilter - ${filteredLogs.size} Kayıt)",
+            title = "Filtrelenen Logları Kopyala ($selectedFilter: ${filteredLogs.size})",
             subtitle = "Şu anda ekranda açık olan listenin tamamını kopyalar",
             icon = Icons.Default.Terminal,
             onClick = {
@@ -736,7 +737,7 @@ private fun ShareActionCard(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(
             containerColor = if (isPrimaryHighlight) MinimalPrimaryLight.copy(alpha = 0.35f) else MinimalSurfaceElevated
         ),
@@ -748,62 +749,72 @@ private fun ShareActionCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.weight(1f)
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .background(badgeColor.copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(38.dp)
-                        .clip(CircleShape)
-                        .background(badgeColor.copy(alpha = 0.15f)),
-                    contentAlignment = Alignment.Center
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = badgeColor,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.Center
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = null,
-                        tint = badgeColor,
-                        modifier = Modifier.size(20.dp)
+                    Text(
+                        text = title,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MinimalTextPrimary,
+                        modifier = Modifier.weight(1f, fill = false),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
                     )
-                }
-                Spacer(modifier = Modifier.width(12.dp))
-                Column {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = title,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MinimalTextPrimary
-                        )
-                        if (badge != null) {
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Surface(
-                                shape = RoundedCornerShape(999.dp),
-                                color = badgeColor.copy(alpha = 0.18f)
-                            ) {
-                                Text(
-                                    text = badge,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = badgeColor,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                )
-                            }
+                    if (badge != null) {
+                        Surface(
+                            shape = RoundedCornerShape(999.dp),
+                            color = badgeColor.copy(alpha = 0.18f)
+                        ) {
+                            Text(
+                                text = badge,
+                                fontSize = 9.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = badgeColor,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.5.dp)
+                            )
                         }
                     }
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = subtitle,
-                        fontSize = 11.sp,
-                        color = MinimalTextSecondary
-                    )
                 }
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = subtitle,
+                    fontSize = 11.sp,
+                    color = MinimalTextSecondary,
+                    lineHeight = 15.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
-            Spacer(modifier = Modifier.width(8.dp))
+
+            Spacer(modifier = Modifier.width(10.dp))
+
             Icon(
                 imageVector = trailingIcon,
                 contentDescription = null,
