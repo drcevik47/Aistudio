@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.QueryStats
 import androidx.compose.material.icons.filled.Refresh
@@ -39,6 +40,7 @@ import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.TrendingDown
 import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -53,6 +55,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -113,6 +116,7 @@ fun TradeAnalysisScreen(
     var selectedStartDateMillis by remember { mutableStateOf<Long?>(null) } // Custom start date chosen by user
     var selectedSymbolOption by remember { mutableStateOf("MNTUSDT") } // "MNTUSDT", "ALL", "CUSTOM"
     var customSymbolText by remember { mutableStateOf("") }
+    var showClearDialog by remember { mutableStateOf(false) }
 
     val triggerFetch = {
         val symbol = when (selectedSymbolOption) {
@@ -155,7 +159,8 @@ fun TradeAnalysisScreen(
                 onSymbolOptionChange = { selectedSymbolOption = it },
                 customSymbolText = customSymbolText,
                 onCustomSymbolTextChange = { customSymbolText = it },
-                onFetchAnalysis = triggerFetch
+                onFetchAnalysis = triggerFetch,
+                onClearClick = if (onClearLocalDatabase != null) { { showClearDialog = true } } else null
             )
         }
 
@@ -221,7 +226,7 @@ fun TradeAnalysisScreen(
                         }
                         if (onClearLocalDatabase != null && state.syncResult != null && state.syncResult.totalInDb > 0) {
                             TextButton(
-                                onClick = onClearLocalDatabase,
+                                onClick = { showClearDialog = true },
                                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
                             ) {
                                 Text(
@@ -423,6 +428,53 @@ fun TradeAnalysisScreen(
             }
         }
     }
+
+    if (showClearDialog && onClearLocalDatabase != null) {
+        AlertDialog(
+            onDismissRequest = { showClearDialog = false },
+            icon = {
+                Icon(
+                    Icons.Default.DeleteSweep,
+                    contentDescription = null,
+                    tint = MinimalErrorDark,
+                    modifier = Modifier.size(28.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = "Geçmiş Veritabanını Sıfırla?",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
+                )
+            },
+            text = {
+                Text(
+                    text = "Telefon hafızasında kayıtlı olan yerel borsa işlem geçmişi temizlenecektir. Borsadan tekrar 'Verileri Çek' butonuna basarak tertemiz ve güncel bir senkronizasyon yapabilirsiniz. Devam etmek istiyor musunuz?",
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp,
+                    color = MinimalTextSecondary
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showClearDialog = false
+                        onClearLocalDatabase()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MinimalErrorDark)
+                ) {
+                    Text("Evet, Sıfırla", fontWeight = FontWeight.Bold, color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearDialog = false }) {
+                    Text("İptal")
+                }
+            },
+            containerColor = MinimalSurface,
+            shape = RoundedCornerShape(16.dp)
+        )
+    }
 }
 
 @Composable
@@ -438,7 +490,8 @@ private fun TradeAnalysisHeaderCard(
     onSymbolOptionChange: (String) -> Unit,
     customSymbolText: String,
     onCustomSymbolTextChange: (String) -> Unit,
-    onFetchAnalysis: () -> Unit
+    onFetchAnalysis: () -> Unit,
+    onClearClick: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
 
@@ -897,6 +950,37 @@ private fun TradeAnalysisHeaderCard(
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center
                         )
                     }
+                }
+            }
+
+            if (onClearClick != null) {
+                Spacer(modifier = Modifier.height(10.dp))
+                OutlinedButton(
+                    onClick = onClearClick,
+                    enabled = !isLoading,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .defaultMinSize(minHeight = 42.dp)
+                        .testTag("clear_exchange_db_button"),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = MinimalErrorDark
+                    ),
+                    border = BorderStroke(1.dp, MinimalErrorDark.copy(alpha = 0.5f))
+                ) {
+                    Icon(
+                        Icons.Default.DeleteSweep,
+                        contentDescription = null,
+                        tint = MinimalErrorDark,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Kayıtlı Borsa Geçmişini Sıfırla",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = MinimalErrorDark
+                    )
                 }
             }
         }
