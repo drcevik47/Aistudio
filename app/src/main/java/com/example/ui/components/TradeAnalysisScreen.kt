@@ -175,7 +175,7 @@ fun TradeAnalysisScreen(
                 ) {
                     Row(
                         modifier = Modifier.padding(14.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.Top
                     ) {
                         Box(
                             modifier = Modifier
@@ -193,15 +193,19 @@ fun TradeAnalysisScreen(
                         }
                         Spacer(modifier = Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
                                 Text(
                                     text = "Veritabanı Senkronize Edildi",
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 13.sp,
-                                    color = MinimalSuccessDark
+                                    color = MinimalSuccessDark,
+                                    modifier = Modifier.weight(1f, fill = false)
                                 )
                                 if (state.syncResult != null && state.syncResult.newlyAddedCount > 0) {
-                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
                                     Surface(
                                         shape = RoundedCornerShape(999.dp),
                                         color = MinimalSuccess
@@ -211,7 +215,8 @@ fun TradeAnalysisScreen(
                                             fontSize = 10.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = Color.White,
-                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                            softWrap = false
                                         )
                                     }
                                 }
@@ -220,22 +225,9 @@ fun TradeAnalysisScreen(
                                 text = state.syncNotice ?: "Borsadaki tüm işlemler yerel veritabanıyla karşılaştırıldı ve güncellendi.",
                                 fontSize = 12.sp,
                                 color = MinimalTextPrimary,
-                                modifier = Modifier.padding(top = 2.dp),
+                                modifier = Modifier.padding(top = 4.dp),
                                 lineHeight = 16.sp
                             )
-                        }
-                        if (onClearLocalDatabase != null && state.syncResult != null && state.syncResult.totalInDb > 0) {
-                            TextButton(
-                                onClick = { showClearDialog = true },
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                            ) {
-                                Text(
-                                    text = "Sıfırla",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MinimalErrorDark
-                                )
-                            }
                         }
                     }
                 }
