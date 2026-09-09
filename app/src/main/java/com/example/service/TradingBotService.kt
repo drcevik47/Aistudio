@@ -82,10 +82,13 @@ class TradingBotService : Service() {
 
     private fun acquireWakeLock() {
         try {
-            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-            wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "BybitBot::TradingWakeLock")
-            wakeLock?.setReferenceCounted(false)
-            wakeLock?.acquire(24 * 60 * 60 * 1000L) // 24 hours safe acquire
+            if (wakeLock == null) {
+                val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+                wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "BybitBot::TradingWakeLock")
+                wakeLock?.setReferenceCounted(false)
+            }
+            // Acquire / Refresh with 24 hours duration
+            wakeLock?.acquire(24 * 60 * 60 * 1000L)
         } catch (e: Exception) {
             Log.e("TradingBotService", "WakeLock acquire error", e)
         }
@@ -169,8 +172,9 @@ class TradingBotService : Service() {
                     // 3. Check active grid limit orders
                     checkActiveOrdersStatus()
 
-                    // Periodic heartbeat log and log pruning every 5 minutes (~75 cycles)
+                    // Periodic heartbeat log, WakeLock refresh, and log pruning every 5 minutes (~75 cycles)
                     if (cycleCount % 75 == 0) {
+                        acquireWakeLock() // Refresh WakeLock for 24/7 background operation
                         repository.pruneLogs()
                         if (currentMntPrice > 0.0) {
                             repository.log(
@@ -298,147 +302,6 @@ class TradingBotService : Service() {
                 false,
                 notificationId = notifId
             )
-        }
-    }
-
-    private suspend fun onOrderFilledTrigger(
-        filledSide: String,
-        filledOrderId: String,
-        fillPrice: Double? = null,
-        fillQty: Double = 0.0
-    ) {
-        val oppositeOrderId = if (filledSide.equals("Buy", ignoreCase = true)) {
-            preferences.activeSellOrderId
-        } else {
-            preferences.activeBuyOrderId
-        }
-
-        // 1. Cancel opposite order
-        if (oppositeOrderId.isNotBlank()) {
-            repository.log(LogLevel.INFO, "GridEngine", "Karşı limit emir iptal ediliyor: $oppositeOrderId")
-            repository.cancelOrder(oppositeOrderId)
-            try {
-                database.orderDao().deleteOrder(oppositeOrderId)
-            } catch (e: Exception) {
-                Log.w("TradingBotService", "deleteOrder failed: ${e.message}")
-            }
-        }
-
-        // 2. Clear active IDs
-        preferences.activeBuyOrderId = ""
-        preferences.activeSellOrderId = ""
-
-        // 4. Determine executed price (from WebSocket, Room DB, or calculated)
-        var executedPrice = fillPrice ?: 0.0
-        if (executedPrice <= 0.0) {
-            val dbOrder = repository.getOrderByOrderId(filledOrderId)
-            if (dbOrder != null && dbOrder.price > 0.0) {
-                executedPrice = dbOrder.price
-            }
-        }
-        if (executedPrice <= 0.0) {
-            val lastBase = preferences.lastRebalancePrice
-            val step = preferences.stepPercent
-            executedPrice = if (lastBase > 0.0) {
-                if (filledSide.equals("Buy", ignoreCase = true)) lastBase * (1 - step / 100.0)
-                else lastBase * (1 + step / 100.0)
-            } else {
-                currentMntPrice
-            }
-        }
-
-        // 5. Save executed order into Room database
-        repository.recordOrderFilled(
-            orderId = filledOrderId,
-            side = filledSide,
-            price = executedPrice,
-            qty = fillQty,
-            triggerReason = if (filledSide.equals("Buy", ignoreCase = true)) "GridStepDownBuy" else "GridStepUpSell"
-        )
-        if (executedPrice > 0.0) {
-            preferences.lastRebalancePrice = executedPrice
-        }
-
-        // 6. Give Bybit time to settle balances and sync server time
-        delay(1500)
-        repository.syncServerTime(preferences.isTestnet)
-
-        // 7. Fetch fresh balances with retry
-        var balances: Map<String, Double>? = null
-        for (retry in 1..3) {
-            val balanceRes = repository.getWalletBalance()
-            if (balanceRes.isSuccess) {
-                balances = balanceRes.getOrNull()
-                break
-            }
-            delay(1000)
-        }
-
-        if (balances == null) {
-            repository.log(LogLevel.ERROR, "GridEngine", "Yeniden dengeleme için cüzdan bakiyesi alınamadı!")
-            return
-        }
-
-        lastUsdtBalance = balances["USDT"] ?: 0.0
-        lastMntBalance = balances["MNT"] ?: 0.0
-
-        val newBasePrice = if (executedPrice > 0.0) executedPrice else {
-            val tickerRes = repository.getMntTicker()
-            tickerRes.getOrNull()?.currentPrice ?: currentMntPrice
-        }
-
-        if (newBasePrice > 0.0 && lastUsdtBalance > 0.0 && lastMntBalance > 0.0) {
-            val stepPercent = preferences.stepPercent
-            val plan = RebalanceEngine.calculateGridOrders(
-                usdtBalance = lastUsdtBalance,
-                mntBalance = lastMntBalance,
-                basePrice = newBasePrice,
-                stepPercent = stepPercent
-            )
-
-            if (plan.isValid) {
-                repository.log(
-                    LogLevel.SUCCESS,
-                    "GridEngine",
-                    "Yeni Baz Fiyat (Son İşlem): ${RebalanceEngine.format4(newBasePrice)} | Yeni Limit Emirler: Satış @ ${RebalanceEngine.format4(plan.sellLimitPrice)} (${RebalanceEngine.format4(plan.sellMntQty)} MNT), Alış @ ${RebalanceEngine.format4(plan.buyLimitPrice)} (${RebalanceEngine.format4(plan.buyMntQty)} MNT)"
-                )
-
-                // Place new Limit Sell
-                val sellRes = repository.createOrder(
-                    side = "Sell",
-                    orderType = "Limit",
-                    qty = plan.sellMntQty,
-                    price = plan.sellLimitPrice,
-                    triggerReason = "GridStepUpSell"
-                )
-                sellRes.onSuccess { sellId ->
-                    preferences.activeSellOrderId = sellId
-                    repository.log(LogLevel.INFO, "GridEngine", "Yeni satış limit emri açıldı: $sellId")
-                }.onFailure { err ->
-                    repository.log(LogLevel.ERROR, "GridEngine", "Satış emri açılamadı: ${err.message}")
-                }
-
-                // Place new Limit Buy
-                val buyRes = repository.createOrder(
-                    side = "Buy",
-                    orderType = "Limit",
-                    qty = plan.buyMntQty,
-                    price = plan.buyLimitPrice,
-                    triggerReason = "GridStepDownBuy"
-                )
-                buyRes.onSuccess { buyId ->
-                    preferences.activeBuyOrderId = buyId
-                    repository.log(LogLevel.INFO, "GridEngine", "Yeni alış limit emri açıldı: $buyId")
-                }.onFailure { err ->
-                    repository.log(LogLevel.ERROR, "GridEngine", "Alış emri açılamadı: ${err.message}")
-                }
-
-                preferences.lastRebalancePrice = newBasePrice
-                updateNotification()
-            } else {
-                repository.log(LogLevel.WARN, "GridEngine", "Yeni emir planı oluşturulamadı: ${plan.validationMessage}")
-                sendAlertNotification("Grid Plan Uyarısı", plan.validationMessage, true, ALERT_NOTIFICATION_ID_BASE + 99)
-            }
         }
     }
 

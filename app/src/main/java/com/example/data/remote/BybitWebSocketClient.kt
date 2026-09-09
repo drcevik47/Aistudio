@@ -74,6 +74,7 @@ class BybitWebSocketClient(
         this.isRunning = true
 
         disconnect()
+        isIntentionalDisconnect = false
         startPublicWs()
         if (key.isNotBlank() && secret.isNotBlank()) {
             startPrivateWs()
@@ -289,6 +290,7 @@ class BybitWebSocketClient(
             if (isRunning) {
                 Log.d("BybitWS", "Reconnecting WebSockets (attempt $reconnectAttempts after ${backoffMs}ms)...")
                 disconnect()
+                isIntentionalDisconnect = false
                 startPublicWs()
                 if (apiKey.isNotBlank() && apiSecret.isNotBlank()) {
                     startPrivateWs()
@@ -299,19 +301,21 @@ class BybitWebSocketClient(
 
     fun disconnect() {
         isIntentionalDisconnect = true
+        val wsPublic = publicWs
+        val wsPrivate = privateWs
+        publicWs = null
+        privateWs = null
         try {
-            publicWs?.close(1000, "App closed")
-            privateWs?.close(1000, "App closed")
+            wsPublic?.close(1000, "App closed")
+            wsPrivate?.close(1000, "App closed")
         } catch (e: Exception) {
             // Ignore
         }
-        publicWs = null
-        privateWs = null
-        isIntentionalDisconnect = false
     }
 
     fun stop() {
         isRunning = false
+        isIntentionalDisconnect = true
         pingJob?.cancel()
         reconnectJob?.cancel()
         disconnect()

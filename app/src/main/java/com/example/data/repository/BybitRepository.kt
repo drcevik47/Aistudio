@@ -1449,7 +1449,7 @@ class BybitRepository(
             // 2. Sell orders: fee is deducted in quote coin (USDT). Value in USDT = feeValue
             val totalFee = executions.sumOf { exec ->
                 if (exec.isBuy) {
-                    val p = if (exec.priceValue > 0.0) exec.priceValue else avgBuyPrice
+                    val p = if (exec.priceValue > 0.0) exec.priceValue else if (avgBuyPrice > 0.0) avgBuyPrice else 0.0
                     exec.feeValue * p
                 } else {
                     exec.feeValue
@@ -1536,29 +1536,34 @@ class BybitRepository(
             }
 
             // Also keep exchange_trades in sync for instant analysis computation
-            val execPrice = if (price > 0.0) price else existing?.price ?: 0.0
-            val execQty = if (qty > 0.0) qty else existing?.qty ?: 0.0
-            if (execPrice > 0.0 && execQty > 0.0) {
-                val execValue = execPrice * execQty
-                val execFee = execValue * 0.001
-                val execId = "fill_${orderId}_${System.currentTimeMillis()}"
-                exchangeTradeDao.insertTrade(
-                    ExchangeTradeEntity(
-                        execId = execId,
-                        orderId = orderId,
-                        symbol = "MNTUSDT",
-                        side = side,
-                        orderPrice = execPrice,
-                        orderQty = execQty,
-                        orderType = "Limit",
-                        execPrice = execPrice,
-                        execQty = execQty,
-                        execValue = execValue,
-                        execFee = execFee,
-                        timeMillis = System.currentTimeMillis(),
-                        isMaker = true
+            // IDEMPOTENCY GUARD: Check if a trade for this orderId already exists in exchange_trades
+            val alreadyInTrades = if (orderId.isNotBlank()) exchangeTradeDao.hasTradeForOrder(orderId) else false
+            if (!alreadyInTrades) {
+                val execPrice = if (price > 0.0) price else existing?.price ?: 0.0
+                val execQty = if (qty > 0.0) qty else existing?.qty ?: 0.0
+                if (execPrice > 0.0 && execQty > 0.0) {
+                    val execValue = execPrice * execQty
+                    val execFee = execValue * 0.001
+                    // Deterministic execId based on orderId to prevent duplicate insertions even with concurrent calls
+                    val execId = if (orderId.isNotBlank()) "fill_$orderId" else "fill_${System.currentTimeMillis()}"
+                    exchangeTradeDao.insertTrade(
+                        ExchangeTradeEntity(
+                            execId = execId,
+                            orderId = orderId,
+                            symbol = "MNTUSDT",
+                            side = side,
+                            orderPrice = execPrice,
+                            orderQty = execQty,
+                            orderType = "Limit",
+                            execPrice = execPrice,
+                            execQty = execQty,
+                            execValue = execValue,
+                            execFee = execFee,
+                            timeMillis = System.currentTimeMillis(),
+                            isMaker = true
+                        )
                     )
-                )
+                }
             }
 
             log(LogLevel.SUCCESS, "OrderHistory", "İşlem Room Veritabanına kaydedildi: $side $orderId @ $price")

@@ -39,8 +39,24 @@ class BotPreferences(context: Context) {
         set(value) = prefs.edit().putString(KEY_ACTIVE_SELL_ORDER_ID, value).apply()
 
     var lastRebalancePrice: Double
-        get() = prefs.getFloat(KEY_LAST_REBALANCE_PRICE, 0f).toDouble()
-        set(value) = prefs.edit().putFloat(KEY_LAST_REBALANCE_PRICE, value.toFloat()).apply()
+        get() {
+            val str = prefs.getString(KEY_LAST_REBALANCE_PRICE_STR, null)
+            if (str != null) {
+                return str.toDoubleOrNull() ?: 0.0
+            }
+            // Backwards compatibility with legacy float storage
+            return try {
+                prefs.getFloat(KEY_LAST_REBALANCE_PRICE, 0f).toDouble()
+            } catch (e: Exception) {
+                0.0
+            }
+        }
+        set(value) {
+            prefs.edit()
+                .putString(KEY_LAST_REBALANCE_PRICE_STR, value.toString())
+                .putFloat(KEY_LAST_REBALANCE_PRICE, value.toFloat())
+                .apply()
+        }
 
     fun saveCredentials(key: String, secret: String, testnet: Boolean) {
         prefs.edit()
@@ -70,5 +86,6 @@ class BotPreferences(context: Context) {
         private const val KEY_ACTIVE_BUY_ORDER_ID = "active_buy_order_id"
         private const val KEY_ACTIVE_SELL_ORDER_ID = "active_sell_order_id"
         private const val KEY_LAST_REBALANCE_PRICE = "last_rebalance_price"
+        private const val KEY_LAST_REBALANCE_PRICE_STR = "last_rebalance_price_str"
     }
 }

@@ -31,6 +31,12 @@ interface ExchangeTradeDao {
     @Query("SELECT COUNT(*) FROM exchange_trades")
     suspend fun getTradeCountSync(): Int
 
+    @Query("SELECT EXISTS(SELECT 1 FROM exchange_trades WHERE orderId = :orderId LIMIT 1)")
+    suspend fun hasTradeForOrder(orderId: String): Boolean
+
+    @Query("SELECT * FROM exchange_trades WHERE orderId = :orderId LIMIT 1")
+    suspend fun getTradeByOrderId(orderId: String): ExchangeTradeEntity?
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertTrades(trades: List<ExchangeTradeEntity>): List<Long>
 

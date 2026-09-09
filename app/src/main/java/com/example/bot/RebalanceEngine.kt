@@ -355,9 +355,12 @@ object RebalanceEngine {
 
             val totalFee = activeExecutions.sumOf { exec ->
                 if (exec.isBuy) {
-                    val p = if (exec.priceValue > 0.0) exec.priceValue else avgBuyPrice
+                    // For Buy orders in Spot, fee is charged in base asset (e.g. MNT).
+                    // Convert to USDT using the execution's own fill price, falling back to avgBuyPrice if 0.
+                    val p = if (exec.priceValue > 0.0) exec.priceValue else if (avgBuyPrice > 0.0) avgBuyPrice else 0.0
                     exec.feeValue * p
                 } else {
+                    // For Sell orders in Spot, fee is already charged in quote asset (USDT)
                     exec.feeValue
                 }
             }

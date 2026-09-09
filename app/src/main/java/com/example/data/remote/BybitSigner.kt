@@ -1,5 +1,6 @@
 package com.example.data.remote
 
+import android.util.Log
 import java.security.MessageDigest
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
@@ -30,6 +31,7 @@ object BybitSigner {
             val bytes = sha256Hmac.doFinal(data.toByteArray(Charsets.UTF_8))
             bytesToHex(bytes)
         } catch (e: Exception) {
+            Log.e("BybitSigner", "HMAC-SHA256 signing failed: ${e.message}", e)
             ""
         }
     }
