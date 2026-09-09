@@ -172,8 +172,8 @@ class TradingBotService : Service() {
                     // 3. Check active grid limit orders
                     checkActiveOrdersStatus()
 
-                    // Periodic heartbeat log, WakeLock refresh, and log pruning every 5 minutes (~75 cycles)
-                    if (cycleCount % 75 == 0) {
+                    // Periodic heartbeat log, WakeLock refresh, and log pruning every 5 minutes (~20 cycles at 15s)
+                    if (cycleCount % 20 == 0) {
                         acquireWakeLock() // Refresh WakeLock for 24/7 background operation
                         repository.pruneLogs()
                         if (currentMntPrice > 0.0) {
@@ -190,7 +190,7 @@ class TradingBotService : Service() {
                     if (e is CancellationException) throw e
                     repository.log(LogLevel.ERROR, "Watchdog", "Döngü hatası: ${e.message}")
                 }
-                delay(4000) // Poll every 4 seconds
+                delay(15000) // Poll every 15 seconds to prevent rate limit issues
             }
         }
     }

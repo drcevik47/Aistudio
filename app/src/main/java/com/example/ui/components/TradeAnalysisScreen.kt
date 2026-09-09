@@ -124,10 +124,12 @@ fun TradeAnalysisScreen(
 
     val analysis = state.analysis
     val allExecutions = analysis?.executions ?: emptyList()
-    val filteredExecutions = when (selectedFilter) {
-        "BUY" -> allExecutions.filter { it.isBuy }
-        "SELL" -> allExecutions.filter { it.isSell }
-        else -> allExecutions
+    val filteredExecutions = remember(allExecutions, selectedFilter) {
+        when (selectedFilter) {
+            "BUY" -> allExecutions.filter { it.isBuy }
+            "SELL" -> allExecutions.filter { it.isSell }
+            else -> allExecutions
+        }
     }
 
     LazyColumn(

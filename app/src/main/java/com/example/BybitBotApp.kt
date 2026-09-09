@@ -22,6 +22,7 @@ class BybitBotApp : Application() {
         preferences = BotPreferences(this)
         repository = BybitRepository(
             preferences = preferences,
+            database = database,
             orderDao = database.orderDao(),
             logDao = database.logDao(),
             exchangeTradeDao = database.exchangeTradeDao()

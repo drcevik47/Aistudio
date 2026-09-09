@@ -1,4 +1,5 @@
 package com.example.data.repository
+import androidx.room.withTransaction
 
 import android.util.Log
 import com.example.bot.RebalanceEngine
@@ -56,6 +57,7 @@ data class LastFilledTradeInfo(
 
 class BybitRepository(
     private val preferences: BotPreferences,
+    private val database: com.example.data.local.AppDatabase,
     private val orderDao: OrderDao,
     private val logDao: LogDao,
     private val exchangeTradeDao: ExchangeTradeDao
@@ -608,8 +610,10 @@ class BybitRepository(
                 return@withContext Result.failure(Exception("API Key eksik"))
             }
 
-            // 1. Sync server time
-            syncServerTime(isTestnet)
+            // 1. Sync server time only if not synced recently
+            if (serverTimeOffsetMs == 0L) {
+                syncServerTime(isTestnet)
+            }
 
             // 2. Fetch current Open Orders from Bybit
             val openOrdersRes = getOpenOrders()
@@ -1516,7 +1520,8 @@ class BybitRepository(
         fillTime: Long = System.currentTimeMillis()
     ) = withContext(Dispatchers.IO) {
         try {
-            val effectiveTime = if (fillTime > 0L) fillTime else System.currentTimeMillis()
+            database.withTransaction {
+                val effectiveTime = if (fillTime > 0L) fillTime else System.currentTimeMillis()
             val existing = orderDao.getOrderByOrderId(orderId)
             if (existing != null) {
                 orderDao.updateOrderStatus(
@@ -1573,6 +1578,7 @@ class BybitRepository(
                     )
                 }
             }
+            } // Close withTransaction
 
             log(LogLevel.SUCCESS, "OrderHistory", "İşlem Room Veritabanına kaydedildi: $side $orderId @ $price")
         } catch (e: Exception) {
