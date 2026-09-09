@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.ReceiptLong
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -98,10 +99,12 @@ fun OrderHistoryScreen(
     liveAnalysis: TradeAnalysisResult? = null,
     currentPrice: Double = 0.0,
     onClearOrders: () -> Unit,
+    onClearExchangeTrades: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     var selectedFilter by remember { mutableStateOf("ALL") } // ALL, BUY, SELL, FILLED
     var showCalculateDialog by remember { mutableStateOf(false) }
+    var showClearHistoryDialog by remember { mutableStateOf(false) }
     var activeFilterStartDateMillis by remember { mutableStateOf<Long?>(null) }
     val dateFormat = remember { SimpleDateFormat("dd.MM.yyyy HH:mm:ss", Locale.getDefault()) }
 
@@ -218,23 +221,32 @@ fun OrderHistoryScreen(
                         )
                     }
 
-                    if (orders.isNotEmpty()) {
-                        IconButton(
-                            onClick = onClearOrders,
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .background(MinimalSurfaceElevated)
-                                .border(1.dp, MinimalSurfaceBorder, CircleShape)
-                                .testTag("clear_orders_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.DeleteSweep,
-                                contentDescription = "Geçmişi Temizle",
-                                tint = MinimalTextSecondary,
-                                modifier = Modifier.size(18.dp)
+                    // Sıfırla / Temizle Butonu (Hesapla kutusunun hemen sağında yer alır)
+                    val hasHistory = orders.isNotEmpty() || exchangeTrades.isNotEmpty()
+                    IconButton(
+                        onClick = {
+                            if (hasHistory) {
+                                showClearHistoryDialog = true
+                            }
+                        },
+                        enabled = hasHistory,
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(if (hasHistory) MinimalErrorLight.copy(alpha = 0.5f) else MinimalSurfaceElevated)
+                            .border(
+                                1.dp,
+                                if (hasHistory) MinimalErrorDark.copy(alpha = 0.35f) else MinimalSurfaceBorder,
+                                CircleShape
                             )
-                        }
+                            .testTag("clear_orders_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.DeleteSweep,
+                            contentDescription = "Geçmişi Sıfırla",
+                            tint = if (hasHistory) MinimalErrorDark else MinimalTextMuted,
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
                 }
             }
@@ -439,6 +451,55 @@ fun OrderHistoryScreen(
                 activeFilterStartDateMillis = newFilter
             },
             onDismiss = { showCalculateDialog = false }
+        )
+    }
+
+    // Açılır Pencere: İşlem Geçmişini Sıfırla Onayı
+    if (showClearHistoryDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearHistoryDialog = false },
+            icon = {
+                Icon(
+                    Icons.Default.DeleteSweep,
+                    contentDescription = null,
+                    tint = MinimalErrorDark,
+                    modifier = Modifier.size(28.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = "İşlem Geçmişini Sıfırla?",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
+                )
+            },
+            text = {
+                Text(
+                    text = "Telefon hafızasında kayıtlı borsa işlem verileri ve bot emir kayıtları temizlenecektir. Borsadan dilediğiniz zaman 'Borsa Analiz' sekmesinden yeniden veri çekebilirsiniz. Devam etmek istiyor musunuz?",
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp,
+                    color = MinimalTextSecondary
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showClearHistoryDialog = false
+                        onClearOrders()
+                        onClearExchangeTrades?.invoke()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MinimalErrorDark)
+                ) {
+                    Text("Evet, Sıfırla", fontWeight = FontWeight.Bold, color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearHistoryDialog = false }) {
+                    Text("İptal")
+                }
+            },
+            containerColor = MinimalSurface,
+            shape = RoundedCornerShape(16.dp)
         )
     }
 }

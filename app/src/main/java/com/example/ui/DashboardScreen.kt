@@ -481,7 +481,8 @@ fun DashboardScreen(
                         exchangeTrades = exchangeTrades,
                         liveAnalysis = liveAnalysis,
                         currentPrice = state.currentPrice,
-                        onClearOrders = { viewModel.clearOrders() }
+                        onClearOrders = { viewModel.clearOrders() },
+                        onClearExchangeTrades = { viewModel.clearLocalExchangeDatabase() }
                     )
                 }
                 3 -> {
