@@ -471,7 +471,8 @@ fun DashboardScreen(
                         state = tradeAnalysisState,
                         isApiConfigured = state.isConfigured,
                         currentPrice = state.currentPrice,
-                        onFetchAnalysis = { symbol, days, startTimestamp -> viewModel.fetchTradeAnalysis(symbol, days, startTimestamp) }
+                        onFetchAnalysis = { symbol, days, startTimestamp -> viewModel.fetchTradeAnalysis(symbol, days, startTimestamp) },
+                        onClearLocalDatabase = { viewModel.clearLocalExchangeDatabase() }
                     )
                 }
                 2 -> {

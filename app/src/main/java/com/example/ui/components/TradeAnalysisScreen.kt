@@ -105,6 +105,7 @@ fun TradeAnalysisScreen(
     isApiConfigured: Boolean,
     currentPrice: Double = 0.0,
     onFetchAnalysis: (symbol: String?, daysBack: Int, startTimestamp: Long?) -> Unit,
+    onClearLocalDatabase: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     var selectedFilter by remember { mutableStateOf("ALL") } // "ALL", "BUY", "SELL"
@@ -217,6 +218,19 @@ fun TradeAnalysisScreen(
                                 modifier = Modifier.padding(top = 2.dp),
                                 lineHeight = 16.sp
                             )
+                        }
+                        if (onClearLocalDatabase != null && state.syncResult != null && state.syncResult.totalInDb > 0) {
+                            TextButton(
+                                onClick = onClearLocalDatabase,
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = "Sıfırla",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MinimalErrorDark
+                                )
+                            }
                         }
                     }
                 }
