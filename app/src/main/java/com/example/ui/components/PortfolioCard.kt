@@ -240,12 +240,19 @@ fun PortfolioCard(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "MNT Balance",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = MinimalTextSecondary
-                    )
+                    Row(verticalAlignment = Alignment.Bottom) {
+                        Text(
+                            text = "MNT Balance ",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MinimalTextSecondary
+                        )
+                        Text(
+                            text = "(${RebalanceEngine.formatCryptoQty(mntBalance)} MNT)",
+                            fontSize = 11.sp,
+                            color = MinimalTextMuted
+                        )
+                    }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             text = "$${RebalanceEngine.format2(mntValueUsdt)} ",

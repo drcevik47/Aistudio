@@ -903,16 +903,16 @@ class BybitRepository(
                 preferences.activeBuyOrderId = ""
                 preferences.activeSellOrderId = ""
 
-                    delay(1000)
-                    var usdt = 0.0
-                    var mnt = 0.0
-                    getWalletBalance().onSuccess { map ->
-                        usdt = map["USDT"] ?: 0.0
-                        mnt = map["MNT"] ?: 0.0
-                    }
+                delay(1000)
+                var usdt = 0.0
+                var mnt = 0.0
+                getWalletBalance().onSuccess { map ->
+                    usdt = map["USDT"] ?: 0.0
+                    mnt = map["MNT"] ?: 0.0
+                }
 
-                    if (usdt > 0.0 && mnt > 0.0) {
-                        val plan = RebalanceEngine.calculateGridOrders(
+                if (usdt > 0.0 && mnt > 0.0) {
+                    val plan = RebalanceEngine.calculateGridOrders(
                             usdtBalance = usdt,
                             mntBalance = mnt,
                             basePrice = basePrice,
