@@ -172,7 +172,9 @@ data class TradeAnalysisResult(
     val fetchedAt: Long = System.currentTimeMillis(),
     val symbolBreakdown: Map<String, TradeAnalysisResult> = emptyMap()
 ) {
-    val isMultiSymbol: Boolean get() = symbolBreakdown.isNotEmpty()
+    val isMultiSymbol: Boolean get() = (symbol.equals("ALL", ignoreCase = true) ||
+            symbol.contains("TÜM", ignoreCase = true) ||
+            symbol.contains("PORTFÖY", ignoreCase = true)) && symbolBreakdown.isNotEmpty()
     val symbolBreakdownsList: List<TradeAnalysisResult> get() = symbolBreakdown.values.sortedByDescending { it.totalBuyValue + it.totalSellValue }
 
     // Eşleşen alım-satım miktarı (Arbitraj / Alınıp satılmış olan net hacim)

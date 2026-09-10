@@ -1283,7 +1283,7 @@ fun CalculateTradesDialog(
                                         color = MinimalTextSecondary
                                     )
                                     Text(
-                                        text = "${if (analysis.netQty >= 0) "+" else ""}${RebalanceEngine.format4(analysis.netQty)}",
+                                        text = "${if (analysis.netQty >= 0) "+" else ""}${RebalanceEngine.formatCryptoQty(analysis.netQty)}",
                                         fontSize = 14.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = if (analysis.netQty >= 0) MinimalSuccessDark else MinimalErrorDark
@@ -1325,7 +1325,7 @@ fun CalculateTradesDialog(
                                         )
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Text(
-                                            text = "Alınan: ${RebalanceEngine.format2(analysis.totalBuyQty)} ${analysis.baseAsset}",
+                                            text = "Alınan: ${RebalanceEngine.formatCryptoQty(analysis.totalBuyQty)} ${analysis.baseAsset}",
                                             fontSize = 10.sp,
                                             color = MinimalTextSecondary
                                         )
@@ -1354,7 +1354,7 @@ fun CalculateTradesDialog(
                                         )
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Text(
-                                            text = "Satılan: ${RebalanceEngine.format2(analysis.totalSellQty)} ${analysis.baseAsset}",
+                                            text = "Satılan: ${RebalanceEngine.formatCryptoQty(analysis.totalSellQty)} ${analysis.baseAsset}",
                                             fontSize = 10.sp,
                                             color = MinimalTextSecondary
                                         )
@@ -1369,7 +1369,7 @@ fun CalculateTradesDialog(
                         }
 
                         // Kâr / Zarar & Arbitraj Kartı
-                        val isProfitable = analysis.priceDifference > 0.0
+                        val isProfitable = analysis.netProfitUsdt >= 0.0
                         Surface(
                             shape = RoundedCornerShape(14.dp),
                             color = if (isProfitable) MinimalSuccessLight.copy(alpha = 0.5f) else MinimalErrorLight.copy(alpha = 0.5f),
@@ -1382,7 +1382,7 @@ fun CalculateTradesDialog(
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Column {
+                                    Column(modifier = Modifier.weight(1f)) {
                                         Text(
                                             text = "Fiyat Farkı (Alış / Satış)",
                                             fontSize = 11.sp,
@@ -1390,11 +1390,13 @@ fun CalculateTradesDialog(
                                         )
                                         Text(
                                             text = "${if (analysis.priceDifference >= 0) "+" else ""}$${RebalanceEngine.format4(analysis.priceDifference)} (${if (analysis.profitPercentage >= 0) "+" else ""}%${RebalanceEngine.format2(analysis.profitPercentage)})",
-                                            fontSize = 14.sp,
+                                            fontSize = 13.sp,
                                             fontWeight = FontWeight.Bold,
-                                            color = if (isProfitable) MinimalSuccessDark else MinimalErrorDark
+                                            color = if (analysis.priceDifference >= 0) MinimalSuccessDark else MinimalErrorDark
                                         )
                                     }
+
+                                    Spacer(modifier = Modifier.width(8.dp))
 
                                     Column(horizontalAlignment = Alignment.End) {
                                         Text(
@@ -1414,17 +1416,31 @@ fun CalculateTradesDialog(
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
                                         text = "Eşleşen Hacim: ${RebalanceEngine.formatCryptoQty(analysis.matchedQty)} ${analysis.baseAsset}",
                                         fontSize = 10.sp,
-                                        color = MinimalTextSecondary
+                                        color = MinimalTextSecondary,
+                                        modifier = Modifier.weight(1f)
                                     )
+                                    Spacer(modifier = Modifier.width(8.dp))
                                     Text(
                                         text = "Toplam Komisyon: $${RebalanceEngine.format4(analysis.totalFee)}",
                                         fontSize = 10.sp,
-                                        color = MinimalTextSecondary
+                                        color = MinimalTextSecondary,
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.End
+                                    )
+                                }
+
+                                if (analysis.netQty > 1e-8) {
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = "Kalan Varlık: ${RebalanceEngine.formatCryptoQty(analysis.netQty)} ${analysis.baseAsset} (FIFO Maliyet: $${RebalanceEngine.format2(if (analysis.fifoRemainingCost > 0.0) analysis.fifoRemainingCost else analysis.remainingInventoryCost)})",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MinimalPrimaryDark
                                     )
                                 }
                             }
@@ -1611,7 +1627,7 @@ private fun OrderItemCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Miktar: ${RebalanceEngine.format4(order.qty)} $baseAsset",
+                        text = "Miktar: ${RebalanceEngine.formatCryptoQty(order.qty)} $baseAsset",
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = MinimalTextPrimary,
