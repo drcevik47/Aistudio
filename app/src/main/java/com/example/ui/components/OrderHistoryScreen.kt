@@ -350,9 +350,11 @@ fun OrderHistoryScreen(
         // 2. Persistent Analysis Section: Karlılık ve Kazanç
         if (screenAnalysis != null && (screenAnalysis.buyTradeCount > 0 || screenAnalysis.sellTradeCount > 0)) {
             item {
+                val fallbackPrice = screenAnalysis.executions.firstOrNull()?.priceValue ?: 0.0
+                val effectivePrice = if (screenAnalysis.symbol.contains("MNT") && currentPrice > 0.0) currentPrice else fallbackPrice
                 TradeProfitabilityCard(
                     analysis = screenAnalysis,
-                    currentPrice = currentPrice
+                    currentPrice = effectivePrice
                 )
             }
 
