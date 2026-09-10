@@ -166,8 +166,7 @@ data class TradeAnalysisResult(
     val profitPercentage: Double = 0.0,
     val netQty: Double = 0.0,
     val totalFee: Double = 0.0,
-    val fifoRemainingCost: Double = 0.0,
-    val fifoAvgBuyPrice: Double = 0.0,
+    val realizedFeeUsdt: Double = 0.0,
     val executions: List<BybitExecutionDto> = emptyList(),
     val fetchedAt: Long = System.currentTimeMillis(),
     val symbolBreakdown: Map<String, TradeAnalysisResult> = emptyMap()
@@ -203,11 +202,11 @@ data class TradeAnalysisResult(
         0.0
     }
 
-    // Gerçekleşen Net Kâr (Komisyon Düşülmüş USDT)
+    // Gerçekleşen Net Kâr (Gerçekleşen Komisyon Düşülmüş USDT)
     val netProfitUsdt: Double get() = if (isMultiSymbol) {
         symbolBreakdown.values.sumOf { it.netProfitUsdt }
     } else {
-        grossProfitUsdt - totalFee
+        grossProfitUsdt - realizedFeeUsdt
     }
 
     // Net Kâr Oranı (% ROI)

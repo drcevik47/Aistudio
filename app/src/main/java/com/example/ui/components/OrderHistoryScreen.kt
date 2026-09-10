@@ -1427,7 +1427,7 @@ fun CalculateTradesDialog(
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = "Toplam Komisyon: $${RebalanceEngine.format4(analysis.totalFee)}",
+                                        text = "Gerçekleşen Komisyon: $${RebalanceEngine.format4(analysis.realizedFeeUsdt)}",
                                         fontSize = 10.sp,
                                         color = MinimalTextSecondary,
                                         textAlign = androidx.compose.ui.text.style.TextAlign.End
@@ -1437,7 +1437,7 @@ fun CalculateTradesDialog(
                                 if (analysis.netQty > 1e-8) {
                                     Spacer(modifier = Modifier.height(6.dp))
                                     Text(
-                                        text = "Kalan Varlık: ${RebalanceEngine.formatCryptoQty(analysis.netQty)} ${analysis.baseAsset} (FIFO Maliyet: $${RebalanceEngine.format2(if (analysis.fifoRemainingCost > 0.0) analysis.fifoRemainingCost else analysis.remainingInventoryCost)})",
+                                        text = "Kalan Varlık: ${RebalanceEngine.formatCryptoQty(analysis.netQty)} ${analysis.baseAsset} (Maliyet: $${RebalanceEngine.format2(analysis.remainingInventoryCost)})",
                                         fontSize = 10.sp,
                                         fontWeight = FontWeight.Medium,
                                         color = MinimalPrimaryDark

@@ -303,36 +303,16 @@ object RebalanceEngine {
             val profitPcnt = if (avgBuyPrice > 0.0 && avgSellPrice > 0.0) (priceDiff / avgBuyPrice) * 100.0 else 0.0
             val netQty = totalBuyQty - totalSellQty
 
-            val totalFee = symExecs.sumOf { exec ->
-                calculateExecutionFeeUsdt(exec, avgBuyPrice, avgSellPrice)
-            }
+            val matchedQty = minOf(totalBuyQty, totalSellQty).coerceAtLeast(0.0)
+            
+            val totalBuyFeeUsdt = buyExecs.sumOf { calculateExecutionFeeUsdt(it, avgBuyPrice, avgSellPrice) }
+            val totalSellFeeUsdt = sellExecs.sumOf { calculateExecutionFeeUsdt(it, avgBuyPrice, avgSellPrice) }
+            val totalFee = totalBuyFeeUsdt + totalSellFeeUsdt
 
-            // FIFO Envanter Eşleşmesi:
-            // Satışların hangi alışları tükettiğini kronolojik olarak eşleyerek,
-            // elde kalan varlığın gerçek parti maliyetlerini ve ortalamasını hesaplıyoruz.
-            class FifoLot(var qty: Double, val price: Double)
-            val buyLots = mutableListOf<FifoLot>()
-            val chronologicalExecs = symExecs.sortedBy { it.timeMillis }
-            for (exec in chronologicalExecs) {
-                if (exec.isBuy && exec.qtyValue > 0.0) {
-                    buyLots.add(FifoLot(exec.qtyValue, exec.priceValue))
-                } else if (exec.isSell && exec.qtyValue > 0.0) {
-                    var remSell = exec.qtyValue
-                    while (remSell > 1e-8 && buyLots.isNotEmpty()) {
-                        val oldest = buyLots.first()
-                        if (oldest.qty <= remSell + 1e-8) {
-                            remSell -= oldest.qty
-                            buyLots.removeAt(0)
-                        } else {
-                            oldest.qty -= remSell
-                            remSell = 0.0
-                        }
-                    }
-                }
-            }
-            val fifoRemainingQty = buyLots.sumOf { it.qty }
-            val fifoRemainingCost = buyLots.sumOf { it.qty * it.price }
-            val fifoAvgBuyPrice = if (fifoRemainingQty > 1e-8) fifoRemainingCost / fifoRemainingQty else avgBuyPrice
+            // Gerçekleşen (Realized) Komisyon: Sadece eşleşen hacim (arbitraj/kâr edilen kısım) kadarı net kârdan düşülür.
+            val realizedBuyFeeUsdt = if (totalBuyQty > 0) (matchedQty / totalBuyQty) * totalBuyFeeUsdt else 0.0
+            val realizedSellFeeUsdt = if (totalSellQty > 0) (matchedQty / totalSellQty) * totalSellFeeUsdt else 0.0
+            val realizedFeeUsdt = realizedBuyFeeUsdt + realizedSellFeeUsdt
 
             breakdown[sym] = TradeAnalysisResult(
                 symbol = sym,
@@ -350,8 +330,7 @@ object RebalanceEngine {
                 profitPercentage = profitPcnt,
                 netQty = netQty,
                 totalFee = totalFee,
-                fifoRemainingCost = fifoRemainingCost,
-                fifoAvgBuyPrice = fifoAvgBuyPrice,
+                realizedFeeUsdt = realizedFeeUsdt,
                 executions = symExecs.sortedByDescending { it.timeMillis },
                 fetchedAt = System.currentTimeMillis()
             )
@@ -386,12 +365,12 @@ object RebalanceEngine {
 
         // Multi-symbol portfolio calculation:
         // Do NOT sum raw quantities across different coins! Sum USDT values and fees!
-        val totalFifoRemainingCost = breakdown.values.sumOf { it.fifoRemainingCost }
         val allBuyExecs = executions.filter { it.isBuy }
         val allSellExecs = executions.filter { it.isSell }
         val totalBuyValue = breakdown.values.sumOf { it.totalBuyValue }
         val totalSellValue = breakdown.values.sumOf { it.totalSellValue }
         val totalFee = breakdown.values.sumOf { it.totalFee }
+        val totalRealizedFee = breakdown.values.sumOf { it.realizedFeeUsdt }
 
         val totalMatchedCost = breakdown.values.sumOf { it.matchedBuyCost }
         val totalNetProfit = breakdown.values.sumOf { it.netProfitUsdt }
@@ -413,8 +392,7 @@ object RebalanceEngine {
             profitPercentage = overallRoi,
             netQty = 0.0,
             totalFee = totalFee,
-            fifoRemainingCost = totalFifoRemainingCost,
-            fifoAvgBuyPrice = 0.0,
+            realizedFeeUsdt = totalRealizedFee,
             executions = executions.sortedByDescending { it.timeMillis },
             fetchedAt = System.currentTimeMillis(),
             symbolBreakdown = breakdown

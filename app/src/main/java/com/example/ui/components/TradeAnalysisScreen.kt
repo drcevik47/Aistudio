@@ -1786,7 +1786,7 @@ fun TradeProfitabilityCard(
                                     color = MinimalTextMuted
                                 )
                                 Text(
-                                    text = String.format(Locale.US, "-%.4f USDT", analysis.totalFee),
+                                    text = String.format(Locale.US, "-%.4f USDT", analysis.realizedFeeUsdt),
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     color = MinimalTextSecondary,
@@ -1883,18 +1883,18 @@ fun TradeProfitabilityCard(
                         horizontalAlignment = Alignment.End
                     ) {
                         Text(
-                            text = "Toplam Borsa Komisyonu",
+                            text = "Gerçekleşen Komisyon",
                             fontSize = 11.sp,
                             color = MinimalTextSecondary
                         )
                         Text(
-                            text = String.format(Locale.US, "-%.4f USDT", analysis.totalFee),
+                            text = String.format(Locale.US, "-%.4f USDT", analysis.realizedFeeUsdt),
                             fontWeight = FontWeight.Bold,
                             fontSize = 14.sp,
                             color = MinimalTextPrimary
                         )
                         Text(
-                            text = "Tüm işlemlerden düşülen",
+                            text = "Kâr/Zarardan düşülen",
                             fontSize = 10.sp,
                             color = MinimalTextMuted
                         )
@@ -2067,7 +2067,7 @@ fun TradeProfitabilityCard(
                                 }
                             }
 
-                            // Birim Ortalama Alış ve FIFO Dağılımı
+                            // Birim Ortalama Alış
                             if (analysis.avgBuyPrice > 0.0) {
                                 HorizontalDivider(color = MinimalSurfaceBorderLight)
 
@@ -2091,39 +2091,6 @@ fun TradeProfitabilityCard(
                                         )
                                         Text(
                                             text = "Tüm alımların ağırlıklı ortalaması",
-                                            fontSize = 9.sp,
-                                            color = MinimalTextMuted
-                                        )
-                                    }
-
-                                    Column(
-                                        modifier = Modifier.weight(1f),
-                                        horizontalAlignment = Alignment.End
-                                    ) {
-                                        val hasDifferentFifo = analysis.fifoAvgBuyPrice > 0.0 &&
-                                                Math.abs(analysis.fifoAvgBuyPrice - analysis.avgBuyPrice) > 0.0001
-                                        Text(
-                                            text = if (hasDifferentFifo) "FIFO Kalan Parti Ort." else "Net Maliyet Formülü",
-                                            fontSize = 10.sp,
-                                            color = MinimalTextMuted
-                                        )
-                                        Text(
-                                            text = if (hasDifferentFifo) {
-                                                "$${String.format(Locale.US, "%,.4f", analysis.fifoAvgBuyPrice)}"
-                                            } else {
-                                                "$${String.format(Locale.US, "%,.2f USDT", analysis.remainingInventoryCost)}"
-                                            },
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = MinimalTextPrimary,
-                                            fontFamily = FontFamily.Monospace
-                                        )
-                                        Text(
-                                            text = if (hasDifferentFifo) {
-                                                "Maliyet: $${String.format(Locale.US, "%,.2f USDT", analysis.fifoRemainingCost)}"
-                                            } else {
-                                                "Kalan Varlık × Birim Ort."
-                                            },
                                             fontSize = 9.sp,
                                             color = MinimalTextMuted
                                         )
@@ -2285,7 +2252,7 @@ fun TradeProfitabilityCard(
                         color = MinimalTextSecondary
                     )
                     Text(
-                        text = "3. Net Kâr = Brüt Kâr - Bybit Komisyonu\n   = ${String.format(Locale.US, "%+,.2f - %.4f = %+,.2f USDT", analysis.grossProfitUsdt, analysis.totalFee, analysis.netProfitUsdt)}",
+                        text = "3. Net Kâr = Brüt Kâr - Gerçekleşen Komisyon\n   = ${String.format(Locale.US, "%+,.2f - %.4f = %+,.2f USDT", analysis.grossProfitUsdt, analysis.realizedFeeUsdt, analysis.netProfitUsdt)}",
                         fontSize = 10.sp,
                         color = MinimalTextSecondary
                     )
