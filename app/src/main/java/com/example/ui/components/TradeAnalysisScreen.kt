@@ -464,9 +464,11 @@ fun TradeAnalysisScreen(
             // Profitability & Spread Analysis Card
             item {
                 val currentData = displayAnalysis ?: analysis
+                val fallbackPrice = currentData.executions.firstOrNull()?.priceValue ?: 0.0
+                val effectivePrice = if (currentData.symbol.contains("MNT") && currentPrice > 0.0) currentPrice else fallbackPrice
                 TradeProfitabilityCard(
                     analysis = currentData,
-                    currentPrice = if (currentData.symbol.contains("MNT")) currentPrice else 0.0
+                    currentPrice = effectivePrice
                 )
             }
 
@@ -2035,6 +2037,11 @@ fun TradeProfitabilityCard(
                                         fontSize = 14.sp,
                                         color = MinimalTextPrimary
                                     )
+                                    Text(
+                                        text = "Alınan: ${RebalanceEngine.formatCryptoQty(analysis.totalBuyQty)} | Satılan: ${RebalanceEngine.formatCryptoQty(analysis.totalSellQty)}",
+                                        fontSize = 9.sp,
+                                        color = MinimalTextMuted
+                                    )
                                 }
 
                                 Column(
@@ -2042,7 +2049,7 @@ fun TradeProfitabilityCard(
                                     horizontalAlignment = Alignment.End
                                 ) {
                                     Text(
-                                        text = "Ortalama Alış Değeri",
+                                        text = if (analysis.netQty > 0) "Kalan Varlık Maliyeti" else "Dönem Dışı Maliyet",
                                         fontSize = 11.sp,
                                         color = MinimalTextSecondary
                                     )
@@ -2052,6 +2059,75 @@ fun TradeProfitabilityCard(
                                         fontSize = 14.sp,
                                         color = MinimalTextPrimary
                                     )
+                                    Text(
+                                        text = "${RebalanceEngine.formatCryptoQty(analysis.netQty)} × $${String.format(Locale.US, "%,.2f", analysis.avgBuyPrice)}",
+                                        fontSize = 9.sp,
+                                        color = MinimalTextMuted
+                                    )
+                                }
+                            }
+
+                            // Birim Ortalama Alış ve FIFO Dağılımı
+                            if (analysis.avgBuyPrice > 0.0) {
+                                HorizontalDivider(color = MinimalSurfaceBorderLight)
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "Birim Ortalama Alış",
+                                            fontSize = 10.sp,
+                                            color = MinimalTextMuted
+                                        )
+                                        Text(
+                                            text = "$${String.format(Locale.US, "%,.4f", analysis.avgBuyPrice)}",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MinimalTextPrimary,
+                                            fontFamily = FontFamily.Monospace
+                                        )
+                                        Text(
+                                            text = "Tüm alımların ağırlıklı ortalaması",
+                                            fontSize = 9.sp,
+                                            color = MinimalTextMuted
+                                        )
+                                    }
+
+                                    Column(
+                                        modifier = Modifier.weight(1f),
+                                        horizontalAlignment = Alignment.End
+                                    ) {
+                                        val hasDifferentFifo = analysis.fifoAvgBuyPrice > 0.0 &&
+                                                Math.abs(analysis.fifoAvgBuyPrice - analysis.avgBuyPrice) > 0.0001
+                                        Text(
+                                            text = if (hasDifferentFifo) "FIFO Kalan Parti Ort." else "Net Maliyet Formülü",
+                                            fontSize = 10.sp,
+                                            color = MinimalTextMuted
+                                        )
+                                        Text(
+                                            text = if (hasDifferentFifo) {
+                                                "$${String.format(Locale.US, "%,.4f", analysis.fifoAvgBuyPrice)}"
+                                            } else {
+                                                "$${String.format(Locale.US, "%,.2f USDT", analysis.remainingInventoryCost)}"
+                                            },
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MinimalTextPrimary,
+                                            fontFamily = FontFamily.Monospace
+                                        )
+                                        Text(
+                                            text = if (hasDifferentFifo) {
+                                                "Maliyet: $${String.format(Locale.US, "%,.2f USDT", analysis.fifoRemainingCost)}"
+                                            } else {
+                                                "Kalan Varlık × Birim Ort."
+                                            },
+                                            fontSize = 9.sp,
+                                            color = MinimalTextMuted
+                                        )
+                                    }
                                 }
                             }
 
@@ -2215,7 +2291,7 @@ fun TradeProfitabilityCard(
                     )
                     if (analysis.netQty > 0) {
                         Text(
-                            text = "4. Kalan Portföy = Satılmamış ${RebalanceEngine.formatCryptoQty(analysis.netQty)} ${analysis.baseAsset}, ortalama $${String.format(Locale.US, "%.4f", analysis.avgBuyPrice)} maliyetle ($${String.format(Locale.US, "%,.2f", analysis.remainingInventoryCost)} USDT) cüzdanınızdadır.",
+                            text = "4. Kalan Portföy = Satılmamış ${RebalanceEngine.formatCryptoQty(analysis.netQty)} ${analysis.baseAsset}. Birim ağırlıklı ortalama alış fiyatı $${String.format(Locale.US, "%.4f", analysis.avgBuyPrice)} olup, toplam alış maliyeti $${String.format(Locale.US, "%,.2f", analysis.remainingInventoryCost)} USDT'dir.",
                             fontSize = 10.sp,
                             color = MinimalTextSecondary
                         )

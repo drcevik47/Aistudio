@@ -307,6 +307,33 @@ object RebalanceEngine {
                 calculateExecutionFeeUsdt(exec, avgBuyPrice, avgSellPrice)
             }
 
+            // FIFO Envanter Eşleşmesi:
+            // Satışların hangi alışları tükettiğini kronolojik olarak eşleyerek,
+            // elde kalan varlığın gerçek parti maliyetlerini ve ortalamasını hesaplıyoruz.
+            class FifoLot(var qty: Double, val price: Double)
+            val buyLots = mutableListOf<FifoLot>()
+            val chronologicalExecs = symExecs.sortedBy { it.timeMillis }
+            for (exec in chronologicalExecs) {
+                if (exec.isBuy && exec.qtyValue > 0.0) {
+                    buyLots.add(FifoLot(exec.qtyValue, exec.priceValue))
+                } else if (exec.isSell && exec.qtyValue > 0.0) {
+                    var remSell = exec.qtyValue
+                    while (remSell > 1e-8 && buyLots.isNotEmpty()) {
+                        val oldest = buyLots.first()
+                        if (oldest.qty <= remSell + 1e-8) {
+                            remSell -= oldest.qty
+                            buyLots.removeAt(0)
+                        } else {
+                            oldest.qty -= remSell
+                            remSell = 0.0
+                        }
+                    }
+                }
+            }
+            val fifoRemainingQty = buyLots.sumOf { it.qty }
+            val fifoRemainingCost = buyLots.sumOf { it.qty * it.price }
+            val fifoAvgBuyPrice = if (fifoRemainingQty > 1e-8) fifoRemainingCost / fifoRemainingQty else avgBuyPrice
+
             breakdown[sym] = TradeAnalysisResult(
                 symbol = sym,
                 daysRange = daysRange,
@@ -323,6 +350,8 @@ object RebalanceEngine {
                 profitPercentage = profitPcnt,
                 netQty = netQty,
                 totalFee = totalFee,
+                fifoRemainingCost = fifoRemainingCost,
+                fifoAvgBuyPrice = fifoAvgBuyPrice,
                 executions = symExecs.sortedByDescending { it.timeMillis },
                 fetchedAt = System.currentTimeMillis()
             )
@@ -357,6 +386,7 @@ object RebalanceEngine {
 
         // Multi-symbol portfolio calculation:
         // Do NOT sum raw quantities across different coins! Sum USDT values and fees!
+        val totalFifoRemainingCost = breakdown.values.sumOf { it.fifoRemainingCost }
         val allBuyExecs = executions.filter { it.isBuy }
         val allSellExecs = executions.filter { it.isSell }
         val totalBuyValue = breakdown.values.sumOf { it.totalBuyValue }
@@ -383,6 +413,8 @@ object RebalanceEngine {
             profitPercentage = overallRoi,
             netQty = 0.0,
             totalFee = totalFee,
+            fifoRemainingCost = totalFifoRemainingCost,
+            fifoAvgBuyPrice = 0.0,
             executions = executions.sortedByDescending { it.timeMillis },
             fetchedAt = System.currentTimeMillis(),
             symbolBreakdown = breakdown
@@ -579,10 +611,9 @@ object RebalanceEngine {
         val sign = if (qty < 0) "-" else ""
         return when {
             absQty == 0.0 -> "0.00"
-            absQty < 0.00001 -> String.format(Locale.US, "%s%.6f", sign, absQty).trimEnd('0').trimEnd('.')
-            absQty < 0.001 -> String.format(Locale.US, "%s%.5f", sign, absQty).trimEnd('0').trimEnd('.')
-            absQty < 0.01 -> String.format(Locale.US, "%s%.4f", sign, absQty)
-            absQty < 1.0 -> String.format(Locale.US, "%s%.4f", sign, absQty)
+            absQty < 0.0001 -> String.format(Locale.US, "%s%.8f", sign, absQty).trimEnd('0').trimEnd('.')
+            absQty < 1.0 -> String.format(Locale.US, "%s%.6f", sign, absQty).trimEnd('0').trimEnd('.')
+            absQty < 100.0 -> String.format(Locale.US, "%s%.4f", sign, absQty).trimEnd('0').trimEnd('.')
             absQty < 1000.0 -> String.format(Locale.US, "%s%.2f", sign, absQty)
             else -> String.format(Locale.US, "%s%,.2f", sign, absQty)
         }

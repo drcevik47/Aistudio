@@ -166,6 +166,8 @@ data class TradeAnalysisResult(
     val profitPercentage: Double = 0.0,
     val netQty: Double = 0.0,
     val totalFee: Double = 0.0,
+    val fifoRemainingCost: Double = 0.0,
+    val fifoAvgBuyPrice: Double = 0.0,
     val executions: List<BybitExecutionDto> = emptyList(),
     val fetchedAt: Long = System.currentTimeMillis(),
     val symbolBreakdown: Map<String, TradeAnalysisResult> = emptyMap()
