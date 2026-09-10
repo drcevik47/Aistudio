@@ -166,49 +166,73 @@ data class TradeAnalysisResult(
     val netQty: Double = 0.0,
     val totalFee: Double = 0.0,
     val executions: List<BybitExecutionDto> = emptyList(),
-    val fetchedAt: Long = System.currentTimeMillis()
+    val fetchedAt: Long = System.currentTimeMillis(),
+    val symbolBreakdown: Map<String, TradeAnalysisResult> = emptyMap()
 ) {
+    val isMultiSymbol: Boolean get() = symbolBreakdown.isNotEmpty()
+    val symbolBreakdownsList: List<TradeAnalysisResult> get() = symbolBreakdown.values.sortedByDescending { it.totalBuyValue + it.totalSellValue }
+
     // Eşleşen alım-satım miktarı (Arbitraj / Alınıp satılmış olan net hacim)
     val matchedQty: Double get() = minOf(totalBuyQty, totalSellQty).coerceAtLeast(0.0)
 
     // Eşleşen hacmin ortalama alış maliyeti (USDT)
-    val matchedBuyCost: Double get() = matchedQty * avgBuyPrice
+    val matchedBuyCost: Double get() = if (isMultiSymbol) {
+        symbolBreakdown.values.sumOf { it.matchedBuyCost }
+    } else {
+        matchedQty * avgBuyPrice
+    }
 
     // Eşleşen hacmin ortalama satış hasılatı (USDT)
-    val matchedSellRevenue: Double get() = matchedQty * avgSellPrice
+    val matchedSellRevenue: Double get() = if (isMultiSymbol) {
+        symbolBreakdown.values.sumOf { it.matchedSellRevenue }
+    } else {
+        matchedQty * avgSellPrice
+    }
 
     // Gerçekleşen Brüt Kâr (USDT) = Eşleşen Miktar * (Ortalama Satış Fiyatı - Ortalama Alış Fiyatı)
-    val grossProfitUsdt: Double get() = if (avgBuyPrice > 0.0 && avgSellPrice > 0.0) {
+    val grossProfitUsdt: Double get() = if (isMultiSymbol) {
+        symbolBreakdown.values.sumOf { it.grossProfitUsdt }
+    } else if (avgBuyPrice > 0.0 && avgSellPrice > 0.0) {
         matchedQty * (avgSellPrice - avgBuyPrice)
     } else {
         0.0
     }
 
     // Gerçekleşen Net Kâr (Komisyon Düşülmüş USDT)
-    val netProfitUsdt: Double get() = grossProfitUsdt - totalFee
+    val netProfitUsdt: Double get() = if (isMultiSymbol) {
+        symbolBreakdown.values.sumOf { it.netProfitUsdt }
+    } else {
+        grossProfitUsdt - totalFee
+    }
 
     // Net Kâr Oranı (% ROI)
-    val netProfitPercentage: Double get() = if (matchedBuyCost > 0.0) {
+    val netProfitPercentage: Double get() = if (isMultiSymbol) {
+        val totalCost = symbolBreakdown.values.sumOf { it.matchedBuyCost }
+        if (totalCost > 0.0) (netProfitUsdt / totalCost) * 100.0 else 0.0
+    } else if (matchedBuyCost > 0.0) {
         (netProfitUsdt / matchedBuyCost) * 100.0
     } else {
         0.0
     }
 
     // Kalan varlığın ortalama alış fiyatından maliyet değeri (USDT)
-    val remainingInventoryCost: Double get() = if (netQty > 0.0 && avgBuyPrice > 0.0) {
+    val remainingInventoryCost: Double get() = if (isMultiSymbol) {
+        symbolBreakdown.values.sumOf { it.remainingInventoryCost }
+    } else if (netQty > 0.0 && avgBuyPrice > 0.0) {
         netQty * avgBuyPrice
     } else {
         0.0
     }
 
-    // Varlık birimi (Örn: MNT)
+    // Varlık birimi (Örn: MNT, BTC, SOL)
     val baseAsset: String get() {
-        val s = symbol.uppercase()
+        val s = symbol.uppercase().trim()
         return when {
+            s == "ALL" || s.contains("TÜM") -> "PORTFÖY"
             s.endsWith("USDT") -> s.removeSuffix("USDT")
             s.endsWith("USDC") -> s.removeSuffix("USDC")
             s.contains("/") -> s.substringBefore("/")
-            else -> "MNT"
+            else -> s.ifBlank { "MNT" }
         }
     }
 }

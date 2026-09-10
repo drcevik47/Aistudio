@@ -13,6 +13,12 @@ interface OrderDao {
     @Query("SELECT * FROM orders ORDER BY timestamp DESC")
     fun getAllOrders(): Flow<List<OrderEntity>>
 
+    @Query("SELECT DISTINCT symbol FROM orders WHERE symbol IS NOT NULL AND symbol != '' ORDER BY symbol ASC")
+    fun getAllDistinctSymbols(): Flow<List<String>>
+
+    @Query("SELECT DISTINCT symbol FROM orders WHERE symbol IS NOT NULL AND symbol != '' ORDER BY symbol ASC")
+    suspend fun getAllDistinctSymbolsSync(): List<String>
+
     @Query("SELECT * FROM orders WHERE status = 'Filled' ORDER BY timestamp DESC")
     fun getFilledOrders(): Flow<List<OrderEntity>>
 

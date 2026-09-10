@@ -128,7 +128,23 @@ fun TradeAnalysisScreen(
     }
 
     val analysis = state.analysis
-    val allExecutions = analysis?.executions ?: emptyList()
+
+    // If analysis is multi-symbol, default to MNTUSDT if present, otherwise ALL
+    var selectedBreakdownSymbol by remember(analysis) {
+        mutableStateOf<String?>(
+            if (analysis != null && analysis.isMultiSymbol && analysis.symbolBreakdown.isNotEmpty()) {
+                if (analysis.symbolBreakdown.containsKey("MNTUSDT")) "MNTUSDT" else "ALL"
+            } else null
+        )
+    }
+
+    val displayAnalysis = remember(analysis, selectedBreakdownSymbol) {
+        if (analysis == null) null
+        else if (!analysis.isMultiSymbol || selectedBreakdownSymbol == null || selectedBreakdownSymbol == "ALL") analysis
+        else analysis.symbolBreakdown[selectedBreakdownSymbol] ?: analysis
+    }
+
+    val allExecutions = displayAnalysis?.executions ?: emptyList()
     val filteredExecutions = remember(allExecutions, selectedFilter) {
         when (selectedFilter) {
             "BUY" -> allExecutions.filter { it.isBuy }
@@ -312,17 +328,156 @@ fun TradeAnalysisScreen(
                 }
             }
         } else if (analysis != null) {
+            // Multi-Coin Dağılım Kartı (Eğer birden fazla coin çekilmişse)
+            if (analysis.symbolBreakdown.size > 1) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = MinimalSurface),
+                        border = BorderStroke(1.dp, MinimalSurfaceBorderLight)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.QueryStats,
+                                        contentDescription = null,
+                                        tint = MinimalPrimary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Coin Dağılımı (${analysis.symbolBreakdown.size} Farklı Coin)",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        color = MinimalTextPrimary
+                                    )
+                                }
+                                Surface(
+                                    shape = RoundedCornerShape(999.dp),
+                                    color = MinimalSuccessLight
+                                ) {
+                                    Text(
+                                        text = "Her Coin Ayrı Hesaplanır",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MinimalSuccessDark,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+
+                            Text(
+                                text = "Borsadan tüm spot işlemler çekildi. Hangi coinin detaylı alım-satım ve kârlılık ortalamasını incelemek istediğinizi seçebilirsiniz:",
+                                fontSize = 11.sp,
+                                color = MinimalTextSecondary
+                            )
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                // MNTUSDT first, then other coins
+                                val sortedKeys = analysis.symbolBreakdown.keys.sortedWith(Comparator { a, b ->
+                                    if (a == "MNTUSDT") -1 else if (b == "MNTUSDT") 1 else a.compareTo(b)
+                                })
+
+                                sortedKeys.forEach { sym ->
+                                    val isSelected = selectedBreakdownSymbol.equals(sym, ignoreCase = true)
+                                    val cleanName = if (sym.endsWith("USDT")) sym.removeSuffix("USDT") else sym
+                                    val coinData = analysis.symbolBreakdown[sym]
+                                    val coinTradeCount = (coinData?.buyTradeCount ?: 0) + (coinData?.sellTradeCount ?: 0)
+
+                                    FilterChip(
+                                        selected = isSelected,
+                                        onClick = { selectedBreakdownSymbol = sym },
+                                        shape = RoundedCornerShape(999.dp),
+                                        label = {
+                                            Text(
+                                                text = if (sym == "MNTUSDT") "🪙 MNT (Varsayılan - $coinTradeCount)" else "🪙 $cleanName ($coinTradeCount)",
+                                                fontSize = 11.sp,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                            )
+                                        },
+                                        colors = FilterChipDefaults.filterChipColors(
+                                            selectedContainerColor = MinimalPrimary,
+                                            selectedLabelColor = Color.White,
+                                            containerColor = MinimalSurfaceElevated,
+                                            labelColor = MinimalTextPrimary
+                                        ),
+                                        border = FilterChipDefaults.filterChipBorder(
+                                            enabled = true,
+                                            selected = isSelected,
+                                            borderColor = MinimalSurfaceBorder,
+                                            selectedBorderColor = MinimalPrimary
+                                        )
+                                    )
+                                }
+
+                                val isAll = selectedBreakdownSymbol == "ALL"
+                                FilterChip(
+                                    selected = isAll,
+                                    onClick = { selectedBreakdownSymbol = "ALL" },
+                                    shape = RoundedCornerShape(999.dp),
+                                    label = {
+                                        Text(
+                                            text = "📊 Tüm Portföy Özeti",
+                                            fontSize = 11.sp,
+                                            fontWeight = if (isAll) FontWeight.Bold else FontWeight.Medium
+                                        )
+                                    },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = MinimalPrimary,
+                                        selectedLabelColor = Color.White,
+                                        containerColor = MinimalSurfaceElevated,
+                                        labelColor = MinimalTextPrimary
+                                    ),
+                                    border = FilterChipDefaults.filterChipBorder(
+                                        enabled = true,
+                                        selected = isAll,
+                                        borderColor = MinimalSurfaceBorder,
+                                        selectedBorderColor = MinimalPrimary
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             // Summary Cards: Buy vs Sell Calculations
             item {
-                TradeAveragesOverview(analysis = analysis)
+                TradeAveragesOverview(analysis = displayAnalysis ?: analysis)
             }
 
             // Profitability & Spread Analysis Card
             item {
+                val currentData = displayAnalysis ?: analysis
                 TradeProfitabilityCard(
-                    analysis = analysis,
-                    currentPrice = currentPrice
+                    analysis = currentData,
+                    currentPrice = if (currentData.symbol.contains("MNT")) currentPrice else 0.0
                 )
+            }
+
+            // Coin Breakdown Overview when ALL or overview is selected in Multi-Symbol mode
+            if (analysis.isMultiSymbol && (selectedBreakdownSymbol == "ALL" || selectedBreakdownSymbol == null)) {
+                item {
+                    CoinBreakdownOverviewSection(
+                        symbolBreakdowns = analysis.symbolBreakdownsList,
+                        selectedSymbol = selectedBreakdownSymbol,
+                        onSelectSymbol = { selectedBreakdownSymbol = it }
+                    )
+                }
             }
 
             // Filter Chips Header
@@ -331,6 +486,7 @@ fun TradeAnalysisScreen(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    val currentData = displayAnalysis ?: analysis
                     Text(
                         text = "İşlem Kayıtları (${filteredExecutions.size})",
                         fontWeight = FontWeight.Bold,
@@ -346,8 +502,8 @@ fun TradeAnalysisScreen(
                     ) {
                         listOf(
                             "ALL" to "Tümü (${allExecutions.size})",
-                            "BUY" to "Alışlar (${analysis.buyTradeCount})",
-                            "SELL" to "Satışlar (${analysis.sellTradeCount})"
+                            "BUY" to "Alışlar (${currentData.buyTradeCount})",
+                            "SELL" to "Satışlar (${currentData.sellTradeCount})"
                         ).forEach { (key, label) ->
                             FilterChip(
                                 selected = selectedFilter == key,
@@ -980,6 +1136,155 @@ private fun TradeAnalysisHeaderCard(
 }
 
 @Composable
+fun CoinBreakdownOverviewSection(
+    symbolBreakdowns: List<TradeAnalysisResult>,
+    selectedSymbol: String?,
+    onSelectSymbol: (String) -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("coin_breakdown_section"),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MinimalSurface),
+        border = BorderStroke(1.dp, MinimalSurfaceBorderLight)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .background(MinimalPrimaryLight),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.QueryStats,
+                            contentDescription = null,
+                            tint = MinimalPrimary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column {
+                        Text(
+                            text = "Coin Bazında Kârlılık Dağılımı",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = MinimalTextPrimary
+                        )
+                        Text(
+                            text = "${symbolBreakdowns.size} farklı coin için ayrı ayrı hesaplandı",
+                            fontSize = 11.sp,
+                            color = MinimalTextSecondary
+                        )
+                    }
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(999.dp),
+                    color = MinimalSecondaryLight
+                ) {
+                    Text(
+                        text = "${symbolBreakdowns.size} Coin",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MinimalSecondary,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                symbolBreakdowns.forEach { item ->
+                    val isCurrent = selectedSymbol == item.symbol
+                    val isProfit = item.netProfitUsdt > 0
+                    val isLoss = item.netProfitUsdt < 0
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (isCurrent) MinimalPrimaryLight.copy(alpha = 0.5f) else MinimalSurfaceElevated,
+                        border = BorderStroke(
+                            1.dp,
+                            if (isCurrent) MinimalPrimary else MinimalSurfaceBorderLight
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSelectSymbol(item.symbol) }
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    val cleanName = if (item.symbol.endsWith("USDT")) item.symbol.removeSuffix("USDT") else item.symbol
+                                    Text(
+                                        text = "🪙 $cleanName/USDT",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp,
+                                        color = MinimalTextPrimary
+                                    )
+                                    if (item.symbol == "MNTUSDT") {
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Surface(
+                                            shape = RoundedCornerShape(999.dp),
+                                            color = MinimalPrimaryLight
+                                        ) {
+                                            Text(
+                                                text = "Varsayılan",
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MinimalPrimary,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Text(
+                                    text = String.format(Locale.US, "%+,.2f USDT", item.netProfitUsdt),
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = if (isProfit) MinimalSuccessDark else if (isLoss) MinimalErrorDark else MinimalTextSecondary,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(6.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "${item.buyTradeCount} Alış ($${String.format(Locale.US, "%.2f", item.totalBuyValue)}) • ${item.sellTradeCount} Satış ($${String.format(Locale.US, "%.2f", item.totalSellValue)})",
+                                    fontSize = 11.sp,
+                                    color = MinimalTextMuted
+                                )
+                                Text(
+                                    text = String.format(Locale.US, "ROI: %+.2f%%", item.netProfitPercentage),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (isProfit) MinimalSuccessDark else if (isLoss) MinimalErrorDark else MinimalTextMuted
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun TradeAveragesOverview(
     analysis: TradeAnalysisResult,
     showHeaderBanner: Boolean = true
@@ -1097,38 +1402,74 @@ fun TradeAveragesOverview(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Column {
-                        Text(
-                            text = "Ortalama Alış Fiyatı",
-                            fontSize = 11.sp,
-                            color = MinimalTextSecondary
-                        )
-                        Text(
-                            text = if (analysis.avgBuyPrice > 0) String.format(Locale.US, "$%.4f", analysis.avgBuyPrice) else "—",
-                            fontWeight = FontWeight.Black,
-                            fontSize = 20.sp,
-                            color = MinimalSuccessDark,
-                            fontFamily = FontFamily.Monospace
-                        )
-                    }
+                    if (analysis.isMultiSymbol) {
+                        Column {
+                            Text(
+                                text = "Toplam Alış Hacmi",
+                                fontSize = 11.sp,
+                                color = MinimalTextSecondary
+                            )
+                            Text(
+                                text = String.format(Locale.US, "$%.2f USDT", analysis.totalBuyValue),
+                                fontWeight = FontWeight.Black,
+                                fontSize = 18.sp,
+                                color = MinimalSuccessDark,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
 
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text(
-                            text = "Toplam Alınan Miktar",
-                            fontSize = 11.sp,
-                            color = MinimalTextSecondary
-                        )
-                        Text(
-                            text = String.format(Locale.US, "%.2f MNT", analysis.totalBuyQty),
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp,
-                            color = MinimalTextPrimary
-                        )
-                        Text(
-                            text = String.format(Locale.US, "Tutar: $%.2f USDT", analysis.totalBuyValue),
-                            fontSize = 11.sp,
-                            color = MinimalTextMuted
-                        )
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text(
+                                text = "Portföy Kapsamı",
+                                fontSize = 11.sp,
+                                color = MinimalTextSecondary
+                            )
+                            Text(
+                                text = "${analysis.symbolBreakdown.size} Farklı Coin",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp,
+                                color = MinimalTextPrimary
+                            )
+                            Text(
+                                text = "${analysis.buyTradeCount} Alış İşlemi",
+                                fontSize = 11.sp,
+                                color = MinimalTextMuted
+                            )
+                        }
+                    } else {
+                        Column {
+                            Text(
+                                text = "Ortalama Alış Fiyatı",
+                                fontSize = 11.sp,
+                                color = MinimalTextSecondary
+                            )
+                            Text(
+                                text = if (analysis.avgBuyPrice > 0) String.format(Locale.US, "$%.4f", analysis.avgBuyPrice) else "—",
+                                fontWeight = FontWeight.Black,
+                                fontSize = 20.sp,
+                                color = MinimalSuccessDark,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text(
+                                text = "Toplam Alınan Miktar",
+                                fontSize = 11.sp,
+                                color = MinimalTextSecondary
+                            )
+                            Text(
+                                text = String.format(Locale.US, "%.4f %s", analysis.totalBuyQty, analysis.baseAsset),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 16.sp,
+                                color = MinimalTextPrimary
+                            )
+                            Text(
+                                text = String.format(Locale.US, "Tutar: $%.2f USDT", analysis.totalBuyValue),
+                                fontSize = 11.sp,
+                                color = MinimalTextMuted
+                            )
+                        }
                     }
                 }
             }
@@ -1194,38 +1535,74 @@ fun TradeAveragesOverview(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Column {
-                        Text(
-                            text = "Ortalama Satış Fiyatı",
-                            fontSize = 11.sp,
-                            color = MinimalTextSecondary
-                        )
-                        Text(
-                            text = if (analysis.avgSellPrice > 0) String.format(Locale.US, "$%.4f", analysis.avgSellPrice) else "—",
-                            fontWeight = FontWeight.Black,
-                            fontSize = 20.sp,
-                            color = MinimalErrorDark,
-                            fontFamily = FontFamily.Monospace
-                        )
-                    }
+                    if (analysis.isMultiSymbol) {
+                        Column {
+                            Text(
+                                text = "Toplam Satış Hasılatı",
+                                fontSize = 11.sp,
+                                color = MinimalTextSecondary
+                            )
+                            Text(
+                                text = String.format(Locale.US, "$%.2f USDT", analysis.totalSellValue),
+                                fontWeight = FontWeight.Black,
+                                fontSize = 18.sp,
+                                color = MinimalErrorDark,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
 
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text(
-                            text = "Toplam Satılan Miktar",
-                            fontSize = 11.sp,
-                            color = MinimalTextSecondary
-                        )
-                        Text(
-                            text = String.format(Locale.US, "%.2f MNT", analysis.totalSellQty),
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp,
-                            color = MinimalTextPrimary
-                        )
-                        Text(
-                            text = String.format(Locale.US, "Tutar: $%.2f USDT", analysis.totalSellValue),
-                            fontSize = 11.sp,
-                            color = MinimalTextMuted
-                        )
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text(
+                                text = "İşlem Dağılımı",
+                                fontSize = 11.sp,
+                                color = MinimalTextSecondary
+                            )
+                            Text(
+                                text = "${analysis.sellTradeCount} Satış İşlemi",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp,
+                                color = MinimalTextPrimary
+                            )
+                            Text(
+                                text = "Tüm Spot Pariteleri",
+                                fontSize = 11.sp,
+                                color = MinimalTextMuted
+                            )
+                        }
+                    } else {
+                        Column {
+                            Text(
+                                text = "Ortalama Satış Fiyatı",
+                                fontSize = 11.sp,
+                                color = MinimalTextSecondary
+                            )
+                            Text(
+                                text = if (analysis.avgSellPrice > 0) String.format(Locale.US, "$%.4f", analysis.avgSellPrice) else "—",
+                                fontWeight = FontWeight.Black,
+                                fontSize = 20.sp,
+                                color = MinimalErrorDark,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text(
+                                text = "Toplam Satılan Miktar",
+                                fontSize = 11.sp,
+                                color = MinimalTextSecondary
+                            )
+                            Text(
+                                text = String.format(Locale.US, "%.4f %s", analysis.totalSellQty, analysis.baseAsset),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 16.sp,
+                                color = MinimalTextPrimary
+                            )
+                            Text(
+                                text = String.format(Locale.US, "Tutar: $%.2f USDT", analysis.totalSellValue),
+                                fontSize = 11.sp,
+                                color = MinimalTextMuted
+                            )
+                        }
                     }
                 }
             }
@@ -1347,16 +1724,24 @@ fun TradeProfitabilityCard(
                         color = if (isNetProfitable) MinimalSuccessDark else MinimalErrorDark
                     )
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = String.format(
-                            Locale.US,
-                            "Eşleşen %,.2f %s ticaret hacmi üzerinden hesaplanmıştır.",
-                            analysis.matchedQty,
-                            analysis.baseAsset
-                        ),
-                        fontSize = 11.sp,
-                        color = MinimalTextSecondary
-                    )
+                    if (analysis.isMultiSymbol) {
+                        Text(
+                            text = "${analysis.symbolBreakdown.size} farklı coin paritesinin işlemlerine göre ayrı ayrı hesaplanıp birleştirilmiştir.",
+                            fontSize = 11.sp,
+                            color = MinimalTextSecondary
+                        )
+                    } else {
+                        Text(
+                            text = String.format(
+                                Locale.US,
+                                "Eşleşen %,.2f %s ticaret hacmi üzerinden hesaplanmıştır.",
+                                analysis.matchedQty,
+                                analysis.baseAsset
+                            ),
+                            fontSize = 11.sp,
+                            color = MinimalTextSecondary
+                        )
+                    }
 
                     Spacer(modifier = Modifier.height(10.dp))
 
@@ -1419,171 +1804,224 @@ fun TradeProfitabilityCard(
             Spacer(modifier = Modifier.height(14.dp))
 
             // Detailed Metric Breakdown Grid
-            // Row 1: Eşleşen Hacim & Ortalama Fiyat Farkı
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Eşleşen Ticaret Hacmi",
-                        fontSize = 11.sp,
-                        color = MinimalTextSecondary
-                    )
-                    Text(
-                        text = String.format(Locale.US, "%,.2f %s", analysis.matchedQty, analysis.baseAsset),
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
-                        color = MinimalTextPrimary
-                    )
-                    Text(
-                        text = "Alınıp satılan ortak miktar",
-                        fontSize = 10.sp,
-                        color = MinimalTextMuted
-                    )
-                }
-
-                Column(
-                    modifier = Modifier.weight(1f),
-                    horizontalAlignment = Alignment.End
+            if (analysis.isMultiSymbol) {
+                // Multi-symbol portfolio metrics
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(
-                        text = "Ortalama Fiyat Farkı",
-                        fontSize = 11.sp,
-                        color = MinimalTextSecondary
-                    )
-                    Text(
-                        text = String.format(Locale.US, "%+.4f USDT", analysis.priceDifference),
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
-                        color = if (analysis.priceDifference > 0) MinimalSuccessDark else if (analysis.priceDifference < 0) MinimalErrorDark else MinimalTextPrimary,
-                        fontFamily = FontFamily.Monospace
-                    )
-                    Text(
-                        text = String.format(Locale.US, "Satış $%.4f - Alış $%.4f", analysis.avgSellPrice, analysis.avgBuyPrice),
-                        fontSize = 10.sp,
-                        color = MinimalTextMuted
-                    )
-                }
-            }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Eşleşen Alış Maliyeti",
+                            fontSize = 11.sp,
+                            color = MinimalTextSecondary
+                        )
+                        Text(
+                            text = String.format(Locale.US, "$%,.2f USDT", analysis.matchedBuyCost),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            color = MinimalTextPrimary
+                        )
+                        Text(
+                            text = "Satılan kısımların alış tutarı",
+                            fontSize = 10.sp,
+                            color = MinimalTextMuted
+                        )
+                    }
 
-            HorizontalDivider(
-                modifier = Modifier.padding(vertical = 10.dp),
-                color = MinimalSurfaceBorderLight
-            )
-
-            // Row 2: Eşleşen Alış Tutarı vs Eşleşen Satış Geliri
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Eşleşen Alış Tutarı",
-                        fontSize = 11.sp,
-                        color = MinimalTextSecondary
-                    )
-                    Text(
-                        text = String.format(Locale.US, "$%,.2f USDT", analysis.matchedBuyCost),
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp,
-                        color = MinimalTextPrimary
-                    )
-                    Text(
-                        text = String.format(Locale.US, "%,.2f × $%.4f", analysis.matchedQty, analysis.avgBuyPrice),
-                        fontSize = 10.sp,
-                        color = MinimalTextMuted
-                    )
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        horizontalAlignment = Alignment.End
+                    ) {
+                        Text(
+                            text = "Eşleşen Satış Geliri",
+                            fontSize = 11.sp,
+                            color = MinimalTextSecondary
+                        )
+                        Text(
+                            text = String.format(Locale.US, "$%,.2f USDT", analysis.matchedSellRevenue),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            color = MinimalTextPrimary
+                        )
+                        Text(
+                            text = "Gerçekleşen satış hasılatı",
+                            fontSize = 10.sp,
+                            color = MinimalTextMuted
+                        )
+                    }
                 }
 
-                Column(
-                    modifier = Modifier.weight(1f),
-                    horizontalAlignment = Alignment.End
-                ) {
-                    Text(
-                        text = "Eşleşen Satış Hasılatı",
-                        fontSize = 11.sp,
-                        color = MinimalTextSecondary
-                    )
-                    Text(
-                        text = String.format(Locale.US, "$%,.2f USDT", analysis.matchedSellRevenue),
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp,
-                        color = MinimalTextPrimary
-                    )
-                    Text(
-                        text = String.format(Locale.US, "%,.2f × $%.4f", analysis.matchedQty, analysis.avgSellPrice),
-                        fontSize = 10.sp,
-                        color = MinimalTextMuted
-                    )
-                }
-            }
-
-            // Kalan Envanter / Portföy Dengesi
-            if (analysis.netQty != 0.0) {
                 HorizontalDivider(
                     modifier = Modifier.padding(vertical = 10.dp),
                     color = MinimalSurfaceBorderLight
                 )
 
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = MinimalSurfaceElevated,
-                    border = BorderStroke(1.dp, MinimalSurfaceBorderLight),
-                    modifier = Modifier.fillMaxWidth()
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Portföy Kapsamı",
+                            fontSize = 11.sp,
+                            color = MinimalTextSecondary
+                        )
+                        Text(
+                            text = "${analysis.symbolBreakdown.size} Farklı Coin",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = MinimalTextPrimary
+                        )
+                        Text(
+                            text = "Ayrı ayrı hesaplanan pariteler",
+                            fontSize = 10.sp,
+                            color = MinimalTextMuted
+                        )
+                    }
+
                     Column(
-                        modifier = Modifier.padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                        modifier = Modifier.weight(1f),
+                        horizontalAlignment = Alignment.End
                     ) {
-                        // Kalan Varlık ve Ortalama Maliyet
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                        Text(
+                            text = "Toplam Borsa Komisyonu",
+                            fontSize = 11.sp,
+                            color = MinimalTextSecondary
+                        )
+                        Text(
+                            text = String.format(Locale.US, "-%.4f USDT", analysis.totalFee),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = MinimalTextPrimary
+                        )
+                        Text(
+                            text = "Tüm işlemlerden düşülen",
+                            fontSize = 10.sp,
+                            color = MinimalTextMuted
+                        )
+                    }
+                }
+            } else {
+                // Single-symbol metrics
+                // Row 1: Eşleşen Hacim & Ortalama Fiyat Farkı
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Eşleşen Ticaret Hacmi",
+                            fontSize = 11.sp,
+                            color = MinimalTextSecondary
+                        )
+                        Text(
+                            text = String.format(Locale.US, "%,.2f %s", analysis.matchedQty, analysis.baseAsset),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            color = MinimalTextPrimary
+                        )
+                        Text(
+                            text = "Alınıp satılan ortak miktar",
+                            fontSize = 10.sp,
+                            color = MinimalTextMuted
+                        )
+                    }
+
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        horizontalAlignment = Alignment.End
+                    ) {
+                        Text(
+                            text = "Ortalama Fiyat Farkı",
+                            fontSize = 11.sp,
+                            color = MinimalTextSecondary
+                        )
+                        Text(
+                            text = String.format(Locale.US, "%+.4f USDT", analysis.priceDifference),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            color = if (analysis.priceDifference > 0) MinimalSuccessDark else if (analysis.priceDifference < 0) MinimalErrorDark else MinimalTextPrimary,
+                            fontFamily = FontFamily.Monospace
+                        )
+                        Text(
+                            text = String.format(Locale.US, "Satış $%.4f - Alış $%.4f", analysis.avgSellPrice, analysis.avgBuyPrice),
+                            fontSize = 10.sp,
+                            color = MinimalTextMuted
+                        )
+                    }
+                }
+
+                HorizontalDivider(
+                    modifier = Modifier.padding(vertical = 10.dp),
+                    color = MinimalSurfaceBorderLight
+                )
+
+                // Row 2: Eşleşen Alış Tutarı vs Eşleşen Satış Geliri
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Eşleşen Alış Tutarı",
+                            fontSize = 11.sp,
+                            color = MinimalTextSecondary
+                        )
+                        Text(
+                            text = String.format(Locale.US, "$%,.2f USDT", analysis.matchedBuyCost),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = MinimalTextPrimary
+                        )
+                        Text(
+                            text = String.format(Locale.US, "%,.2f × $%.4f", analysis.matchedQty, analysis.avgBuyPrice),
+                            fontSize = 10.sp,
+                            color = MinimalTextMuted
+                        )
+                    }
+
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        horizontalAlignment = Alignment.End
+                    ) {
+                        Text(
+                            text = "Eşleşen Satış Hasılatı",
+                            fontSize = 11.sp,
+                            color = MinimalTextSecondary
+                        )
+                        Text(
+                            text = String.format(Locale.US, "$%,.2f USDT", analysis.matchedSellRevenue),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = MinimalTextPrimary
+                        )
+                        Text(
+                            text = String.format(Locale.US, "%,.2f × $%.4f", analysis.matchedQty, analysis.avgSellPrice),
+                            fontSize = 10.sp,
+                            color = MinimalTextMuted
+                        )
+                    }
+                }
+
+                // Kalan Envanter / Portföy Dengesi
+                if (analysis.netQty != 0.0) {
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 10.dp),
+                        color = MinimalSurfaceBorderLight
+                    )
+
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MinimalSurfaceElevated,
+                        border = BorderStroke(1.dp, MinimalSurfaceBorderLight),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = if (analysis.netQty > 0) "Kalan Satılmamış Varlık" else "Önceki Dönemden Satılan",
-                                    fontSize = 11.sp,
-                                    color = MinimalTextSecondary
-                                )
-                                Text(
-                                    text = String.format(Locale.US, "%+,.2f %s", analysis.netQty, analysis.baseAsset),
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 14.sp,
-                                    color = MinimalTextPrimary
-                                )
-                            }
-
-                            Column(
-                                modifier = Modifier.weight(1f),
-                                horizontalAlignment = Alignment.End
-                            ) {
-                                Text(
-                                    text = "Ortalama Alış Değeri",
-                                    fontSize = 11.sp,
-                                    color = MinimalTextSecondary
-                                )
-                                Text(
-                                    text = String.format(Locale.US, "$%,.2f USDT", analysis.remainingInventoryCost),
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 14.sp,
-                                    color = MinimalTextPrimary
-                                )
-                            }
-                        }
-
-                        // Canlı Fiyat Değerlemesi (eğer currentPrice mevcutsa ve pozitif miktar varsa)
-                        if (currentPrice > 0.0 && analysis.netQty > 0.0) {
-                            val liveInventoryValue = analysis.netQty * currentPrice
-                            val unrealizedPnl = analysis.netQty * (currentPrice - analysis.avgBuyPrice)
-                            val unrealizedPcnt = if (analysis.avgBuyPrice > 0) ((currentPrice - analysis.avgBuyPrice) / analysis.avgBuyPrice) * 100.0 else 0.0
-                            val totalCombinedProfit = analysis.netProfitUsdt + unrealizedPnl
-
-                            HorizontalDivider(color = MinimalSurfaceBorder)
-
-                            // Canlı Değer ve Açık Kâr/Zarar
+                            // Kalan Varlık ve Ortalama Maliyet
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -1591,20 +2029,15 @@ fun TradeProfitabilityCard(
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = "Canlı Piyasa Değeri",
-                                        fontSize = 10.sp,
-                                        color = MinimalTextMuted
+                                        text = if (analysis.netQty > 0) "Kalan Satılmamış Varlık" else "Önceki Dönemden Satılan",
+                                        fontSize = 11.sp,
+                                        color = MinimalTextSecondary
                                     )
                                     Text(
-                                        text = String.format(Locale.US, "$%,.2f USDT", liveInventoryValue),
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.SemiBold,
+                                        text = String.format(Locale.US, "%+,.2f %s", analysis.netQty, analysis.baseAsset),
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp,
                                         color = MinimalTextPrimary
-                                    )
-                                    Text(
-                                        text = String.format(Locale.US, "Anlık: $%.4f", currentPrice),
-                                        fontSize = 9.sp,
-                                        color = MinimalTextMuted
                                     )
                                 }
 
@@ -1613,55 +2046,107 @@ fun TradeProfitabilityCard(
                                     horizontalAlignment = Alignment.End
                                 ) {
                                     Text(
-                                        text = "Açık Kâr / Zarar",
-                                        fontSize = 10.sp,
-                                        color = MinimalTextMuted
+                                        text = "Ortalama Alış Değeri",
+                                        fontSize = 11.sp,
+                                        color = MinimalTextSecondary
                                     )
                                     Text(
-                                        text = String.format(Locale.US, "%+,.2f USDT (%+.1f%%)", unrealizedPnl, unrealizedPcnt),
-                                        fontSize = 12.sp,
+                                        text = String.format(Locale.US, "$%,.2f USDT", analysis.remainingInventoryCost),
                                         fontWeight = FontWeight.Bold,
-                                        color = if (unrealizedPnl >= 0) MinimalSuccessDark else MinimalErrorDark,
-                                        maxLines = 1,
-                                        softWrap = false
+                                        fontSize = 14.sp,
+                                        color = MinimalTextPrimary
                                     )
                                 }
                             }
 
-                            // Toplam Portföy Getirisi (Net Gerçekleşen + Açık K/Z)
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = (if (totalCombinedProfit >= 0) MinimalSuccessLight else MinimalErrorLight).copy(alpha = 0.5f),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
+                            // Canlı Fiyat Değerlemesi (eğer currentPrice mevcutsa ve pozitif miktar varsa)
+                            if (currentPrice > 0.0 && analysis.netQty > 0.0) {
+                                val liveInventoryValue = analysis.netQty * currentPrice
+                                val unrealizedPnl = analysis.netQty * (currentPrice - analysis.avgBuyPrice)
+                                val unrealizedPcnt = if (analysis.avgBuyPrice > 0) ((currentPrice - analysis.avgBuyPrice) / analysis.avgBuyPrice) * 100.0 else 0.0
+                                val totalCombinedProfit = analysis.netProfitUsdt + unrealizedPnl
+
+                                HorizontalDivider(color = MinimalSurfaceBorder)
+
+                                // Canlı Değer ve Açık Kâr/Zarar
                                 Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 10.dp, vertical = 7.dp),
+                                    modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(
-                                        text = "Genel Portföy Getirisi",
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = MinimalTextPrimary
-                                    )
-                                    Text(
-                                        text = String.format(Locale.US, "%+,.2f USDT", totalCombinedProfit),
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        fontFamily = FontFamily.Monospace,
-                                        color = if (totalCombinedProfit >= 0) MinimalSuccessDark else MinimalErrorDark,
-                                        maxLines = 1,
-                                        softWrap = false
-                                    )
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "Canlı Piyasa Değeri",
+                                            fontSize = 10.sp,
+                                            color = MinimalTextMuted
+                                        )
+                                        Text(
+                                            text = String.format(Locale.US, "$%,.2f USDT", liveInventoryValue),
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MinimalTextPrimary
+                                        )
+                                        Text(
+                                            text = String.format(Locale.US, "Anlık: $%.4f", currentPrice),
+                                            fontSize = 9.sp,
+                                            color = MinimalTextMuted
+                                        )
+                                    }
+
+                                    Column(
+                                        modifier = Modifier.weight(1f),
+                                        horizontalAlignment = Alignment.End
+                                    ) {
+                                        Text(
+                                            text = "Açık Kâr / Zarar",
+                                            fontSize = 10.sp,
+                                            color = MinimalTextMuted
+                                        )
+                                        Text(
+                                            text = String.format(Locale.US, "%+,.2f USDT (%+.1f%%)", unrealizedPnl, unrealizedPcnt),
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (unrealizedPnl >= 0) MinimalSuccessDark else MinimalErrorDark,
+                                            maxLines = 1,
+                                            softWrap = false
+                                        )
+                                    }
+                                }
+
+                                // Toplam Portföy Getirisi (Net Gerçekleşen + Açık K/Z)
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = (if (totalCombinedProfit >= 0) MinimalSuccessLight else MinimalErrorLight).copy(alpha = 0.5f),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 10.dp, vertical = 7.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "Genel Portföy Getirisi",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MinimalTextPrimary
+                                        )
+                                        Text(
+                                            text = String.format(Locale.US, "%+,.2f USDT", totalCombinedProfit),
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = if (totalCombinedProfit >= 0) MinimalSuccessDark else MinimalErrorDark,
+                                            maxLines = 1,
+                                            softWrap = false
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
                 }
-            }
 
             Spacer(modifier = Modifier.height(10.dp))
 
@@ -1743,6 +2228,7 @@ fun TradeProfitabilityCard(
             }
         }
     }
+}
 }
 
 @Composable

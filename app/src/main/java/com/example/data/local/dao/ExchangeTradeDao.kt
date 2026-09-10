@@ -22,6 +22,12 @@ interface ExchangeTradeDao {
     @Query("SELECT * FROM exchange_trades WHERE symbol = :symbol ORDER BY timeMillis DESC")
     suspend fun getTradesBySymbolSync(symbol: String): List<ExchangeTradeEntity>
 
+    @Query("SELECT DISTINCT symbol FROM exchange_trades WHERE symbol IS NOT NULL AND symbol != '' ORDER BY symbol ASC")
+    fun getAllDistinctSymbols(): Flow<List<String>>
+
+    @Query("SELECT DISTINCT symbol FROM exchange_trades WHERE symbol IS NOT NULL AND symbol != '' ORDER BY symbol ASC")
+    suspend fun getAllDistinctSymbolsSync(): List<String>
+
     @Query("SELECT execId FROM exchange_trades")
     suspend fun getAllExecIds(): List<String>
 

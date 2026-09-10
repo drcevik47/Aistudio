@@ -108,24 +108,46 @@ fun OrderHistoryScreen(
     var showClearHistoryDialog by remember { mutableStateOf(false) }
     var activeFilterStartDateMillis by remember { mutableStateOf<Long?>(null) }
     var activeFilterEndDateMillis by remember { mutableStateOf<Long?>(null) }
-    val dateFormat = remember { SimpleDateFormat("dd.MM.yyyy HH:mm:ss", Locale.getDefault()) }
 
-    // Screen Analysis: if custom filter is active, calculate from database starting from that date
-    val screenAnalysis = remember(orders, exchangeTrades, liveAnalysis, activeFilterStartDateMillis, activeFilterEndDateMillis) {
-        if (activeFilterStartDateMillis != null || activeFilterEndDateMillis != null) {
-            RebalanceEngine.computeLiveTradeAnalysis(
-                orders = orders,
-                exchangeTrades = exchangeTrades,
-                startTimestamp = activeFilterStartDateMillis,
-                endTimestamp = activeFilterEndDateMillis
-            )
+    // Distinct traded symbols from DB, with MNT always positioned first as the default
+    val availableSymbols = remember(orders, exchangeTrades) {
+        val syms = (orders.map { it.symbol } + exchangeTrades.map { it.symbol })
+            .filter { it.isNotBlank() }
+            .map { it.uppercase().trim() }
+            .distinct()
+            .toMutableList()
+        if (!syms.contains("MNTUSDT")) {
+            syms.add(0, "MNTUSDT")
         } else {
-            liveAnalysis
+            syms.remove("MNTUSDT")
+            syms.add(0, "MNTUSDT")
         }
+        syms
     }
 
-    val filteredOrders = remember(orders, selectedFilter, activeFilterStartDateMillis, activeFilterEndDateMillis) {
+    // Default symbol to "MNTUSDT" (MNT coin) as requested
+    var selectedSymbol by remember { mutableStateOf("MNTUSDT") }
+    val dateFormat = remember { SimpleDateFormat("dd.MM.yyyy HH:mm:ss", Locale.getDefault()) }
+
+    // Screen Analysis: calculated from database for the selected coin and date filter
+    val screenAnalysis = remember(orders, exchangeTrades, selectedSymbol, activeFilterStartDateMillis, activeFilterEndDateMillis) {
+        RebalanceEngine.computeLiveTradeAnalysis(
+            orders = orders,
+            exchangeTrades = exchangeTrades,
+            symbol = selectedSymbol,
+            startTimestamp = activeFilterStartDateMillis,
+            endTimestamp = activeFilterEndDateMillis
+        )
+    }
+
+    val filteredOrders = remember(orders, selectedFilter, selectedSymbol, activeFilterStartDateMillis, activeFilterEndDateMillis) {
         orders.filter { order ->
+            val symbolMatch = if (selectedSymbol == "ALL") {
+                true
+            } else {
+                order.symbol.equals(selectedSymbol, ignoreCase = true) ||
+                        (selectedSymbol == "MNTUSDT" && order.symbol.isBlank())
+            }
             val filterMatch = when (selectedFilter) {
                 "BUY" -> order.side.equals("Buy", ignoreCase = true)
                 "SELL" -> order.side.equals("Sell", ignoreCase = true)
@@ -134,7 +156,7 @@ fun OrderHistoryScreen(
             }
             val startMatch = activeFilterStartDateMillis == null || order.timestamp >= activeFilterStartDateMillis!!
             val endMatch = activeFilterEndDateMillis == null || order.timestamp <= activeFilterEndDateMillis!!
-            filterMatch && startMatch && endMatch
+            symbolMatch && filterMatch && startMatch && endMatch
         }
     }
 
@@ -340,12 +362,97 @@ fun OrderHistoryScreen(
             }
         }
 
-        // 4. Filter Chips Header
+        // 4. Filter Chips Header (Coin / Sembol Seçimi + Emir Tipi Filtresi)
         item {
             Column(
                 modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                // Coin / Parite Seçici (MNT Varsayılan)
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Coin / Parite Filtresi",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp,
+                            color = MinimalTextSecondary
+                        )
+                        Text(
+                            text = if (selectedSymbol == "MNTUSDT") "Varsayılan (MNT)" else if (selectedSymbol == "ALL") "Tüm Pariteler" else selectedSymbol,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MinimalPrimary
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        availableSymbols.forEach { sym ->
+                            val isSelected = selectedSymbol.equals(sym, ignoreCase = true)
+                            val cleanName = if (sym.endsWith("USDT")) sym.removeSuffix("USDT") else sym
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = { selectedSymbol = sym },
+                                shape = RoundedCornerShape(999.dp),
+                                label = {
+                                    Text(
+                                        text = if (sym == "MNTUSDT") "🪙 MNT (Varsayılan)" else "🪙 $cleanName",
+                                        fontSize = 12.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                    )
+                                },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = MinimalPrimary,
+                                    selectedLabelColor = Color.White,
+                                    containerColor = MinimalSurfaceElevated,
+                                    labelColor = MinimalTextPrimary
+                                ),
+                                border = FilterChipDefaults.filterChipBorder(
+                                    enabled = true,
+                                    selected = isSelected,
+                                    borderColor = MinimalSurfaceBorder,
+                                    selectedBorderColor = MinimalPrimary
+                                )
+                            )
+                        }
+
+                        // Tüm Pariteler
+                        val isAll = selectedSymbol == "ALL"
+                        FilterChip(
+                            selected = isAll,
+                            onClick = { selectedSymbol = "ALL" },
+                            shape = RoundedCornerShape(999.dp),
+                            label = {
+                                Text(
+                                    text = "🌐 Tüm Pariteler",
+                                    fontSize = 12.sp,
+                                    fontWeight = if (isAll) FontWeight.Bold else FontWeight.Medium
+                                )
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = MinimalPrimary,
+                                selectedLabelColor = Color.White,
+                                containerColor = MinimalSurfaceElevated,
+                                labelColor = MinimalTextPrimary
+                            ),
+                            border = FilterChipDefaults.filterChipBorder(
+                                enabled = true,
+                                selected = isAll,
+                                borderColor = MinimalSurfaceBorder,
+                                selectedBorderColor = MinimalPrimary
+                            )
+                        )
+                    }
+                }
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -465,9 +572,11 @@ fun OrderHistoryScreen(
             currentPrice = currentPrice,
             activeStartDateMillis = activeFilterStartDateMillis,
             activeEndDateMillis = activeFilterEndDateMillis,
-            onApplyFilter = { newStart, newEnd ->
+            activeSymbol = selectedSymbol,
+            onApplyFilter = { newStart, newEnd, newSym ->
                 activeFilterStartDateMillis = newStart
                 activeFilterEndDateMillis = newEnd
+                selectedSymbol = newSym
             },
             onDismiss = { showCalculateDialog = false }
         )
@@ -530,7 +639,8 @@ fun CalculateTradesDialog(
     currentPrice: Double,
     activeStartDateMillis: Long?,
     activeEndDateMillis: Long? = null,
-    onApplyFilter: (Long?, Long?) -> Unit,
+    activeSymbol: String = "MNTUSDT",
+    onApplyFilter: (Long?, Long?, String) -> Unit,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -550,11 +660,29 @@ fun CalculateTradesDialog(
         )
     }
 
-    val analysis = remember(orders, exchangeTrades, selectedStartDateMillis, selectedEndDateMillis) {
+    // Available symbols in DB with MNT first
+    val availableSymbols = remember(orders, exchangeTrades) {
+        val syms = (orders.map { it.symbol } + exchangeTrades.map { it.symbol })
+            .filter { it.isNotBlank() }
+            .map { it.uppercase().trim() }
+            .distinct()
+            .toMutableList()
+        if (!syms.contains("MNTUSDT")) {
+            syms.add(0, "MNTUSDT")
+        } else {
+            syms.remove("MNTUSDT")
+            syms.add(0, "MNTUSDT")
+        }
+        syms
+    }
+
+    var selectedSymbol by remember { mutableStateOf(activeSymbol) }
+
+    val analysis = remember(orders, exchangeTrades, selectedSymbol, selectedStartDateMillis, selectedEndDateMillis) {
         RebalanceEngine.computeLiveTradeAnalysis(
             orders = orders,
             exchangeTrades = exchangeTrades,
-            symbol = "MNTUSDT",
+            symbol = selectedSymbol,
             startTimestamp = selectedStartDateMillis,
             endTimestamp = selectedEndDateMillis
         )
@@ -645,6 +773,90 @@ fun CalculateTradesDialog(
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
+                    // Coin / Parite Seçimi
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Hesaplanacak Coin / Parite:",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MinimalTextSecondary
+                            )
+                            Text(
+                                text = if (selectedSymbol == "MNTUSDT") "MNT (Varsayılan)" else if (selectedSymbol == "ALL") "Tüm Portföy" else selectedSymbol,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MinimalPrimary
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            availableSymbols.forEach { sym ->
+                                val isSelected = selectedSymbol.equals(sym, ignoreCase = true)
+                                val cleanName = if (sym.endsWith("USDT")) sym.removeSuffix("USDT") else sym
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = { selectedSymbol = sym },
+                                    shape = RoundedCornerShape(999.dp),
+                                    label = {
+                                        Text(
+                                            text = if (sym == "MNTUSDT") "🪙 MNT (Varsayılan)" else "🪙 $cleanName",
+                                            fontSize = 11.sp,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                        )
+                                    },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = MinimalPrimary,
+                                        selectedLabelColor = Color.White,
+                                        containerColor = MinimalSurfaceElevated,
+                                        labelColor = MinimalTextPrimary
+                                    ),
+                                    border = FilterChipDefaults.filterChipBorder(
+                                        enabled = true,
+                                        selected = isSelected,
+                                        borderColor = MinimalSurfaceBorder,
+                                        selectedBorderColor = MinimalPrimary
+                                    )
+                                )
+                            }
+
+                            // Tüm Portföy
+                            val isAll = selectedSymbol == "ALL"
+                            FilterChip(
+                                selected = isAll,
+                                onClick = { selectedSymbol = "ALL" },
+                                shape = RoundedCornerShape(999.dp),
+                                label = {
+                                    Text(
+                                        text = "📊 Tüm Portföy",
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isAll) FontWeight.Bold else FontWeight.Medium
+                                    )
+                                },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = MinimalPrimary,
+                                    selectedLabelColor = Color.White,
+                                    containerColor = MinimalSurfaceElevated,
+                                    labelColor = MinimalTextPrimary
+                                ),
+                                border = FilterChipDefaults.filterChipBorder(
+                                    enabled = true,
+                                    selected = isAll,
+                                    borderColor = MinimalSurfaceBorder,
+                                    selectedBorderColor = MinimalPrimary
+                                )
+                            )
+                        }
+                    }
                     // Tarih Seçici Başlık
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -1238,7 +1450,7 @@ fun CalculateTradesDialog(
 
                     Button(
                         onClick = {
-                            onApplyFilter(selectedStartDateMillis, selectedEndDateMillis)
+                            onApplyFilter(selectedStartDateMillis, selectedEndDateMillis, selectedSymbol)
                             onDismiss()
                         },
                         shape = RoundedCornerShape(12.dp),
@@ -1273,6 +1485,26 @@ private fun OrderItemCard(
     val isBuy = order.side.equals("Buy", ignoreCase = true)
     val sideColor = if (isBuy) MinimalSuccessDark else MinimalError
     val sideBg = if (isBuy) MinimalSuccessLight else MinimalErrorLight
+
+    val displayPair = if (order.symbol.isNotBlank()) {
+        if (order.symbol.endsWith("USDT", ignoreCase = true)) {
+            "${order.symbol.removeSuffix("USDT").uppercase()}/USDT"
+        } else {
+            order.symbol.uppercase()
+        }
+    } else {
+        "MNT/USDT"
+    }
+
+    val baseAsset = if (order.symbol.isNotBlank()) {
+        if (order.symbol.endsWith("USDT", ignoreCase = true)) {
+            order.symbol.removeSuffix("USDT").uppercase()
+        } else {
+            order.symbol.uppercase()
+        }
+    } else {
+        "MNT"
+    }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -1317,7 +1549,7 @@ private fun OrderItemCard(
                             .padding(end = 6.dp)
                     ) {
                         Text(
-                            text = "${if (isBuy) "ALIŞ" else "SATIŞ"} (MNT/USDT)",
+                            text = "${if (isBuy) "ALIŞ" else "SATIŞ"} ($displayPair)",
                             fontWeight = FontWeight.Bold,
                             fontSize = 12.sp,
                             color = sideColor,
@@ -1379,7 +1611,7 @@ private fun OrderItemCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Miktar: ${RebalanceEngine.format4(order.qty)} MNT",
+                        text = "Miktar: ${RebalanceEngine.format4(order.qty)} $baseAsset",
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = MinimalTextPrimary,

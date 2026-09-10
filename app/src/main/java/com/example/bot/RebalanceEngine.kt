@@ -254,11 +254,151 @@ object RebalanceEngine {
     fun format2(value: Double): String = String.format(Locale.US, "%.2f", value)
     fun format4(value: Double): String = String.format(Locale.US, "%.4f", value)
 
+    /**
+     * Calculates trade analysis for a given list of executions.
+     * When multiple symbols are present or symbol is "ALL"/blank:
+     * - Computes a separate, accurate TradeAnalysisResult for EACH individual traded coin/symbol.
+     * - Collects them into `symbolBreakdown` Map<String, TradeAnalysisResult>.
+     * - Avoids cross-coin unit corruption (e.g. adding BTC qty to MNT qty).
+     */
+    fun calculateTradeAnalysis(
+        symbol: String?,
+        executions: List<BybitExecutionDto>,
+        daysRange: Int = 0,
+        dateRangeLabel: String = ""
+    ): TradeAnalysisResult {
+        if (executions.isEmpty()) {
+            return TradeAnalysisResult(
+                symbol = symbol?.takeIf { it.isNotBlank() } ?: "MNTUSDT",
+                daysRange = daysRange,
+                dateRangeLabel = dateRangeLabel,
+                fetchedAt = System.currentTimeMillis()
+            )
+        }
+
+        // Distinct symbols present in executions
+        val distinctSymbols = executions
+            .map { it.symbol.trim().uppercase().ifBlank { "MNTUSDT" } }
+            .distinct()
+            .sorted()
+
+        val breakdown = mutableMapOf<String, TradeAnalysisResult>()
+
+        for (sym in distinctSymbols) {
+            val symExecs = executions.filter {
+                it.symbol.trim().uppercase().ifBlank { "MNTUSDT" } == sym
+            }
+            val buyExecs = symExecs.filter { it.isBuy }
+            val sellExecs = symExecs.filter { it.isSell }
+
+            val totalBuyQty = buyExecs.sumOf { it.qtyValue }
+            val totalBuyValue = buyExecs.sumOf { it.totalValue }
+            val avgBuyPrice = if (totalBuyQty > 0.0) totalBuyValue / totalBuyQty else 0.0
+
+            val totalSellQty = sellExecs.sumOf { it.qtyValue }
+            val totalSellValue = sellExecs.sumOf { it.totalValue }
+            val avgSellPrice = if (totalSellQty > 0.0) totalSellValue / totalSellQty else 0.0
+
+            val priceDiff = if (avgBuyPrice > 0.0 && avgSellPrice > 0.0) avgSellPrice - avgBuyPrice else 0.0
+            val profitPcnt = if (avgBuyPrice > 0.0 && avgSellPrice > 0.0) (priceDiff / avgBuyPrice) * 100.0 else 0.0
+            val netQty = totalBuyQty - totalSellQty
+
+            val totalFee = symExecs.sumOf { exec ->
+                if (exec.isBuy) {
+                    val p = if (exec.priceValue > 0.0) exec.priceValue else if (avgBuyPrice > 0.0) avgBuyPrice else 0.0
+                    exec.feeValue * p
+                } else {
+                    exec.feeValue
+                }
+            }
+
+            breakdown[sym] = TradeAnalysisResult(
+                symbol = sym,
+                daysRange = daysRange,
+                dateRangeLabel = dateRangeLabel,
+                totalBuyQty = totalBuyQty,
+                totalBuyValue = totalBuyValue,
+                avgBuyPrice = avgBuyPrice,
+                buyTradeCount = buyExecs.size,
+                totalSellQty = totalSellQty,
+                totalSellValue = totalSellValue,
+                avgSellPrice = avgSellPrice,
+                sellTradeCount = sellExecs.size,
+                priceDifference = priceDiff,
+                profitPercentage = profitPcnt,
+                netQty = netQty,
+                totalFee = totalFee,
+                executions = symExecs.sortedByDescending { it.timeMillis },
+                fetchedAt = System.currentTimeMillis()
+            )
+        }
+
+        val isAllRequest = symbol.isNullOrBlank() ||
+                symbol.equals("ALL", ignoreCase = true) ||
+                symbol.equals("TÜM", ignoreCase = true) ||
+                symbol.contains("TÜM SPOT", ignoreCase = true)
+
+        if (!isAllRequest) {
+            val reqSym = symbol!!.trim().uppercase()
+            val specific = breakdown[reqSym]
+            return if (specific != null) {
+                specific.copy(symbolBreakdown = breakdown)
+            } else {
+                TradeAnalysisResult(
+                    symbol = reqSym,
+                    daysRange = daysRange,
+                    dateRangeLabel = dateRangeLabel,
+                    fetchedAt = System.currentTimeMillis(),
+                    symbolBreakdown = breakdown
+                )
+            }
+        }
+
+        // If only 1 symbol exists, return that single symbol result directly with breakdown
+        if (breakdown.size == 1) {
+            val single = breakdown.values.first()
+            return single.copy(symbolBreakdown = breakdown)
+        }
+
+        // Multi-symbol portfolio calculation:
+        // Do NOT sum raw quantities across different coins! Sum USDT values and fees!
+        val allBuyExecs = executions.filter { it.isBuy }
+        val allSellExecs = executions.filter { it.isSell }
+        val totalBuyValue = breakdown.values.sumOf { it.totalBuyValue }
+        val totalSellValue = breakdown.values.sumOf { it.totalSellValue }
+        val totalFee = breakdown.values.sumOf { it.totalFee }
+
+        val totalMatchedCost = breakdown.values.sumOf { it.matchedBuyCost }
+        val totalNetProfit = breakdown.values.sumOf { it.netProfitUsdt }
+        val overallRoi = if (totalMatchedCost > 0.0) (totalNetProfit / totalMatchedCost) * 100.0 else 0.0
+
+        return TradeAnalysisResult(
+            symbol = "ALL",
+            daysRange = daysRange,
+            dateRangeLabel = dateRangeLabel,
+            totalBuyQty = 0.0,
+            totalBuyValue = totalBuyValue,
+            avgBuyPrice = 0.0,
+            buyTradeCount = allBuyExecs.size,
+            totalSellQty = 0.0,
+            totalSellValue = totalSellValue,
+            avgSellPrice = 0.0,
+            sellTradeCount = allSellExecs.size,
+            priceDifference = 0.0,
+            profitPercentage = overallRoi,
+            netQty = 0.0,
+            totalFee = totalFee,
+            executions = executions.sortedByDescending { it.timeMillis },
+            fetchedAt = System.currentTimeMillis(),
+            symbolBreakdown = breakdown
+        )
+    }
+
     fun computeLiveTradeAnalysis(
         orders: List<OrderEntity>,
         exchangeTrades: List<ExchangeTradeEntity> = emptyList(),
         apiAnalysis: TradeAnalysisResult? = null,
-        symbol: String = "MNTUSDT",
+        symbol: String? = "MNTUSDT",
         startTimestamp: Long? = null,
         endTimestamp: Long? = null
     ): TradeAnalysisResult {
@@ -273,7 +413,7 @@ object RebalanceEngine {
                     execId = trade.execId,
                     orderId = trade.orderId,
                     orderLinkId = trade.orderLinkId,
-                    symbol = trade.symbol,
+                    symbol = trade.symbol.ifBlank { "MNTUSDT" },
                     side = trade.side,
                     orderPrice = trade.orderPrice.toString(),
                     orderQty = trade.orderQty.toString(),
@@ -304,7 +444,7 @@ object RebalanceEngine {
                         execId = "order_${order.orderId}",
                         orderId = order.orderId,
                         orderLinkId = order.orderLinkId,
-                        symbol = order.symbol,
+                        symbol = order.symbol.ifBlank { "MNTUSDT" },
                         side = order.side,
                         orderPrice = p.toString(),
                         orderQty = q.toString(),
@@ -343,56 +483,15 @@ object RebalanceEngine {
         val activeExecutions = allExecutions.filter { exec ->
             val startTimeMatch = startTimestamp == null || startTimestamp <= 0L || exec.timeMillis >= startTimestamp
             val endTimeMatch = endTimestamp == null || endTimestamp <= 0L || exec.timeMillis <= endTimestamp
-            val symbolMatch = symbol.isBlank() || symbol.equals("ALL", ignoreCase = true) || exec.symbol.equals(symbol, ignoreCase = true)
-            startTimeMatch && endTimeMatch && symbolMatch
+            startTimeMatch && endTimeMatch
         }
 
         if (activeExecutions.isNotEmpty()) {
-            val buyExecs = activeExecutions.filter { it.isBuy }
-            val sellExecs = activeExecutions.filter { it.isSell }
-
-            val totalBuyQty = buyExecs.sumOf { it.qtyValue }
-            val totalBuyValue = buyExecs.sumOf { it.totalValue }
-            val avgBuyPrice = if (totalBuyQty > 0.0) totalBuyValue / totalBuyQty else 0.0
-
-            val totalSellQty = sellExecs.sumOf { it.qtyValue }
-            val totalSellValue = sellExecs.sumOf { it.totalValue }
-            val avgSellPrice = if (totalSellQty > 0.0) totalSellValue / totalSellQty else 0.0
-
-            val priceDiff = if (avgBuyPrice > 0.0 && avgSellPrice > 0.0) avgSellPrice - avgBuyPrice else 0.0
-            val profitPcnt = if (avgBuyPrice > 0.0 && avgSellPrice > 0.0) (priceDiff / avgBuyPrice) * 100.0 else 0.0
-            val netQty = totalBuyQty - totalSellQty
-
-            val totalFee = activeExecutions.sumOf { exec ->
-                if (exec.isBuy) {
-                    // For Buy orders in Spot, fee is charged in base asset (e.g. MNT).
-                    // Convert to USDT using the execution's own fill price, falling back to avgBuyPrice if 0.
-                    val p = if (exec.priceValue > 0.0) exec.priceValue else if (avgBuyPrice > 0.0) avgBuyPrice else 0.0
-                    exec.feeValue * p
-                } else {
-                    // For Sell orders in Spot, fee is already charged in quote asset (USDT)
-                    exec.feeValue
-                }
-            }
-
-            return TradeAnalysisResult(
+            return calculateTradeAnalysis(
                 symbol = symbol,
+                executions = activeExecutions,
                 daysRange = calculatedDaysRange,
-                dateRangeLabel = rangeLabel,
-                totalBuyQty = totalBuyQty,
-                totalBuyValue = totalBuyValue,
-                avgBuyPrice = avgBuyPrice,
-                buyTradeCount = buyExecs.size,
-                totalSellQty = totalSellQty,
-                totalSellValue = totalSellValue,
-                avgSellPrice = avgSellPrice,
-                sellTradeCount = sellExecs.size,
-                priceDifference = priceDiff,
-                profitPercentage = profitPcnt,
-                netQty = netQty,
-                totalFee = totalFee,
-                executions = activeExecutions.sortedByDescending { it.timeMillis },
-                fetchedAt = System.currentTimeMillis()
+                dateRangeLabel = rangeLabel
             )
         }
 
@@ -402,7 +501,7 @@ object RebalanceEngine {
         }
 
         return TradeAnalysisResult(
-            symbol = symbol,
+            symbol = symbol ?: "MNTUSDT",
             daysRange = calculatedDaysRange,
             dateRangeLabel = rangeLabel,
             fetchedAt = System.currentTimeMillis()

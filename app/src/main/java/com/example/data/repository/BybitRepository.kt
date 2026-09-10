@@ -1437,34 +1437,6 @@ class BybitRepository(
                 return@withContext Result.failure(execRes.exceptionOrNull() ?: Exception("İşlem geçmişi çekilemedi"))
             }
 
-            val buyExecs = executions.filter { it.isBuy }
-            val sellExecs = executions.filter { it.isSell }
-
-            val totalBuyQty = buyExecs.sumOf { it.qtyValue }
-            val totalBuyValue = buyExecs.sumOf { it.totalValue }
-            val avgBuyPrice = if (totalBuyQty > 0.0) totalBuyValue / totalBuyQty else 0.0
-
-            val totalSellQty = sellExecs.sumOf { it.qtyValue }
-            val totalSellValue = sellExecs.sumOf { it.totalValue }
-            val avgSellPrice = if (totalSellQty > 0.0) totalSellValue / totalSellQty else 0.0
-
-            val priceDiff = if (avgBuyPrice > 0.0 && avgSellPrice > 0.0) avgSellPrice - avgBuyPrice else 0.0
-            val profitPcnt = if (avgBuyPrice > 0.0 && avgSellPrice > 0.0) (priceDiff / avgBuyPrice) * 100.0 else 0.0
-            val netQty = totalBuyQty - totalSellQty
-
-            // In Bybit Spot trading:
-            // 1. Buy orders: fee is deducted in base coin (e.g. MNT). Value in USDT = feeValue * execPrice
-            // 2. Sell orders: fee is deducted in quote coin (USDT). Value in USDT = feeValue
-            val totalFee = executions.sumOf { exec ->
-                if (exec.isBuy) {
-                    val p = if (exec.priceValue > 0.0) exec.priceValue else if (avgBuyPrice > 0.0) avgBuyPrice else 0.0
-                    exec.feeValue * p
-                } else {
-                    exec.feeValue
-                }
-            }
-
-            val displaySymbol = if (symbol.isNullOrBlank() || symbol.equals("ALL", ignoreCase = true)) "Tüm Semboller" else symbol.uppercase()
             val effectiveDays = if (startTimestamp != null && startTimestamp > 0L) {
                 val nowMs = System.currentTimeMillis()
                 ((nowMs - startTimestamp) / (24L * 60L * 60L * 1000L)).toInt().coerceAtLeast(1)
@@ -1478,30 +1450,17 @@ class BybitRepository(
                 "Son $daysBack Gün"
             }
 
-            val analysis = TradeAnalysisResult(
-                symbol = displaySymbol,
+            val analysis = com.example.bot.RebalanceEngine.calculateTradeAnalysis(
+                symbol = symbol,
+                executions = executions,
                 daysRange = effectiveDays,
-                dateRangeLabel = rangeLabel,
-                totalBuyQty = totalBuyQty,
-                totalBuyValue = totalBuyValue,
-                avgBuyPrice = avgBuyPrice,
-                buyTradeCount = buyExecs.size,
-                totalSellQty = totalSellQty,
-                totalSellValue = totalSellValue,
-                avgSellPrice = avgSellPrice,
-                sellTradeCount = sellExecs.size,
-                priceDifference = priceDiff,
-                profitPercentage = profitPcnt,
-                netQty = netQty,
-                totalFee = totalFee,
-                executions = executions.sortedByDescending { it.timeMillis },
-                fetchedAt = System.currentTimeMillis()
+                dateRangeLabel = rangeLabel
             )
 
             log(
                 LogLevel.SUCCESS,
                 "TradeAnalysis",
-                "Borsa işlem geçmişi çekildi ($daysBack gün): ${executions.size} işlem. Ort Alış: $avgBuyPrice, Ort Satış: $avgSellPrice"
+                "Borsa işlem geçmişi çekildi ($daysBack gün): ${executions.size} işlem. Semboller: ${analysis.symbolBreakdown.keys.joinToString()}"
             )
 
             Result.success(analysis)
@@ -1757,7 +1716,11 @@ class BybitRepository(
             if (newExecutions.isNotEmpty()) {
                 val entitiesToInsert = newExecutions.map { exec ->
                     val uniqueKey = exec.execId.ifBlank { "${exec.orderId}_${exec.execTime}" }
-                    val effectiveSymbol = if (exec.symbol.isNotBlank()) exec.symbol else (symbol ?: "MNTUSDT")
+                    val effectiveSymbol = if (exec.symbol.isNotBlank()) {
+                        exec.symbol.trim().uppercase()
+                    } else {
+                        (symbol?.takeIf { !it.equals("ALL", ignoreCase = true) && !it.equals("TÜM", ignoreCase = true) } ?: "MNTUSDT").trim().uppercase()
+                    }
                     ExchangeTradeEntity(
                         execId = uniqueKey,
                         orderId = exec.orderId,
