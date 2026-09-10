@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import com.example.bot.RebalanceEngine
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -1459,7 +1460,7 @@ fun TradeAveragesOverview(
                                 color = MinimalTextSecondary
                             )
                             Text(
-                                text = String.format(Locale.US, "%.4f %s", analysis.totalBuyQty, analysis.baseAsset),
+                                text = "${RebalanceEngine.formatCryptoQty(analysis.totalBuyQty)} ${analysis.baseAsset}",
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 16.sp,
                                 color = MinimalTextPrimary
@@ -1592,7 +1593,7 @@ fun TradeAveragesOverview(
                                 color = MinimalTextSecondary
                             )
                             Text(
-                                text = String.format(Locale.US, "%.4f %s", analysis.totalSellQty, analysis.baseAsset),
+                                text = "${RebalanceEngine.formatCryptoQty(analysis.totalSellQty)} ${analysis.baseAsset}",
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 16.sp,
                                 color = MinimalTextPrimary
@@ -1732,12 +1733,7 @@ fun TradeProfitabilityCard(
                         )
                     } else {
                         Text(
-                            text = String.format(
-                                Locale.US,
-                                "Eşleşen %,.2f %s ticaret hacmi üzerinden hesaplanmıştır.",
-                                analysis.matchedQty,
-                                analysis.baseAsset
-                            ),
+                            text = "Eşleşen ${RebalanceEngine.formatCryptoQty(analysis.matchedQty)} ${analysis.baseAsset} ticaret hacmi üzerinden hesaplanmıştır.",
                             fontSize = 11.sp,
                             color = MinimalTextSecondary
                         )
@@ -1916,7 +1912,7 @@ fun TradeProfitabilityCard(
                             color = MinimalTextSecondary
                         )
                         Text(
-                            text = String.format(Locale.US, "%,.2f %s", analysis.matchedQty, analysis.baseAsset),
+                            text = "${RebalanceEngine.formatCryptoQty(analysis.matchedQty)} ${analysis.baseAsset}",
                             fontWeight = FontWeight.Bold,
                             fontSize = 15.sp,
                             color = MinimalTextPrimary
@@ -1975,7 +1971,7 @@ fun TradeProfitabilityCard(
                             color = MinimalTextPrimary
                         )
                         Text(
-                            text = String.format(Locale.US, "%,.2f × $%.4f", analysis.matchedQty, analysis.avgBuyPrice),
+                            text = "${RebalanceEngine.formatCryptoQty(analysis.matchedQty)} × $${String.format(Locale.US, "%.4f", analysis.avgBuyPrice)}",
                             fontSize = 10.sp,
                             color = MinimalTextMuted
                         )
@@ -1997,7 +1993,7 @@ fun TradeProfitabilityCard(
                             color = MinimalTextPrimary
                         )
                         Text(
-                            text = String.format(Locale.US, "%,.2f × $%.4f", analysis.matchedQty, analysis.avgSellPrice),
+                            text = "${RebalanceEngine.formatCryptoQty(analysis.matchedQty)} × $${String.format(Locale.US, "%.4f", analysis.avgSellPrice)}",
                             fontSize = 10.sp,
                             color = MinimalTextMuted
                         )
@@ -2034,7 +2030,7 @@ fun TradeProfitabilityCard(
                                         color = MinimalTextSecondary
                                     )
                                     Text(
-                                        text = String.format(Locale.US, "%+,.2f %s", analysis.netQty, analysis.baseAsset),
+                                        text = "${RebalanceEngine.formatCryptoQtySigned(analysis.netQty)} ${analysis.baseAsset}",
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 14.sp,
                                         color = MinimalTextPrimary
@@ -2203,12 +2199,12 @@ fun TradeProfitabilityCard(
                         color = MinimalTextPrimary
                     )
                     Text(
-                        text = "1. Eşleşen Miktar = min(Toplam Alış, Toplam Satış) = ${String.format(Locale.US, "%,.2f %s", analysis.matchedQty, analysis.baseAsset)}",
+                        text = "1. Eşleşen Miktar = min(Toplam Alış, Toplam Satış) = ${RebalanceEngine.formatCryptoQty(analysis.matchedQty)} ${analysis.baseAsset}",
                         fontSize = 10.sp,
                         color = MinimalTextSecondary
                     )
                     Text(
-                        text = "2. Brüt Kâr = Eşleşen Miktar × (Ort. Satış - Ort. Alış)\n   = ${String.format(Locale.US, "%,.2f × ($%.4f - $%.4f) = %+,.2f USDT", analysis.matchedQty, analysis.avgSellPrice, analysis.avgBuyPrice, analysis.grossProfitUsdt)}",
+                        text = "2. Brüt Kâr = Eşleşen Miktar × (Ort. Satış - Ort. Alış)\n   = ${RebalanceEngine.formatCryptoQty(analysis.matchedQty)} × ($${String.format(Locale.US, "%.4f", analysis.avgSellPrice)} - $${String.format(Locale.US, "%.4f", analysis.avgBuyPrice)}) = ${String.format(Locale.US, "%+,.2f USDT", analysis.grossProfitUsdt)}",
                         fontSize = 10.sp,
                         color = MinimalTextSecondary
                     )
@@ -2219,7 +2215,7 @@ fun TradeProfitabilityCard(
                     )
                     if (analysis.netQty > 0) {
                         Text(
-                            text = "4. Kalan Portföy = Satılmamış ${String.format(Locale.US, "%,.2f %s", analysis.netQty, analysis.baseAsset)}, ortalama $${String.format(Locale.US, "%.4f", analysis.avgBuyPrice)} maliyetle ($${String.format(Locale.US, "%,.2f", analysis.remainingInventoryCost)} USDT) cüzdanınızdadır.",
+                            text = "4. Kalan Portföy = Satılmamış ${RebalanceEngine.formatCryptoQty(analysis.netQty)} ${analysis.baseAsset}, ortalama $${String.format(Locale.US, "%.4f", analysis.avgBuyPrice)} maliyetle ($${String.format(Locale.US, "%,.2f", analysis.remainingInventoryCost)} USDT) cüzdanınızdadır.",
                             fontSize = 10.sp,
                             color = MinimalTextSecondary
                         )
@@ -2334,7 +2330,7 @@ private fun ExecutionItemCard(exec: BybitExecutionDto) {
                         color = MinimalTextSecondary
                     )
                     Text(
-                        text = String.format(Locale.US, "%.2f %s", exec.qtyValue, baseAsset),
+                        text = "${RebalanceEngine.formatCryptoQty(exec.qtyValue)} $baseAsset",
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 13.sp,
                         color = MinimalTextPrimary

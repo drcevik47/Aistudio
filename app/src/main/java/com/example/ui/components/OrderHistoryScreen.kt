@@ -1417,7 +1417,7 @@ fun CalculateTradesDialog(
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
                                     Text(
-                                        text = "Eşleşen Hacim: ${RebalanceEngine.format2(analysis.matchedQty)} ${analysis.baseAsset}",
+                                        text = "Eşleşen Hacim: ${RebalanceEngine.formatCryptoQty(analysis.matchedQty)} ${analysis.baseAsset}",
                                         fontSize = 10.sp,
                                         color = MinimalTextSecondary
                                     )

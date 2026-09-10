@@ -137,6 +137,7 @@ data class BybitExecutionDto(
     @Json(name = "execValue") val execValue: String = "0",
     @Json(name = "execFee") val execFee: String = "0",
     @Json(name = "feeRate") val feeRate: String = "0",
+    @Json(name = "feeCurrency") val feeCurrency: String = "",
     @Json(name = "execTime") val execTime: String = "0",
     @Json(name = "isMaker") val isMaker: Boolean = false
 ) {

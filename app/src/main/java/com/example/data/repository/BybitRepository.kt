@@ -1735,6 +1735,7 @@ class BybitRepository(
                         execValue = exec.totalValue,
                         execFee = exec.feeValue,
                         feeRate = exec.feeRate.toDoubleOrNull() ?: 0.0,
+                        feeCurrency = exec.feeCurrency,
                         timeMillis = if (exec.timeMillis > 0) exec.timeMillis else System.currentTimeMillis(),
                         isMaker = exec.isMaker
                     )

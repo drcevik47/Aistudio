@@ -33,6 +33,7 @@ data class ExchangeTradeEntity(
     val execValue: Double,
     val execFee: Double = 0.0,
     val feeRate: Double = 0.0,
+    val feeCurrency: String = "",
     val timeMillis: Long,
     val isMaker: Boolean = false,
     val syncedAt: Long = System.currentTimeMillis()

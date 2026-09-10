@@ -304,12 +304,7 @@ object RebalanceEngine {
             val netQty = totalBuyQty - totalSellQty
 
             val totalFee = symExecs.sumOf { exec ->
-                if (exec.isBuy) {
-                    val p = if (exec.priceValue > 0.0) exec.priceValue else if (avgBuyPrice > 0.0) avgBuyPrice else 0.0
-                    exec.feeValue * p
-                } else {
-                    exec.feeValue
-                }
+                calculateExecutionFeeUsdt(exec, avgBuyPrice, avgSellPrice)
             }
 
             breakdown[sym] = TradeAnalysisResult(
@@ -423,6 +418,7 @@ object RebalanceEngine {
                     execValue = trade.execValue.toString(),
                     execFee = trade.execFee.toString(),
                     feeRate = trade.feeRate.toString(),
+                    feeCurrency = trade.feeCurrency,
                     execTime = trade.timeMillis.toString(),
                     isMaker = trade.isMaker
                 )
@@ -506,5 +502,94 @@ object RebalanceEngine {
             dateRangeLabel = rangeLabel,
             fetchedAt = System.currentTimeMillis()
         )
+    }
+
+    /**
+     * Bybit Spot işlem komisyonunu USDT karşılığına güvenli ve doğru şekilde dönüştürür.
+     * Bybit Spot kuralları:
+     * - Satışta komisyon her zaman USDT (quote) cinsinden kesilir.
+     * - Alışta Bybit varsayılan olarak alınan coinden veya MNT/USDT indiriminden kesebilir.
+     * - Ancak kullanıcı USDT veya MNT ile ödediyse ya da execFee değeri zaten USDT ise,
+     *   bunu tekrar BTC fiyatıyla çarpmak astronomik (ör. $3,241) hatalı komisyonlara yol açar.
+     */
+    fun calculateExecutionFeeUsdt(
+        exec: BybitExecutionDto,
+        avgBuyPrice: Double = 0.0,
+        avgSellPrice: Double = 0.0
+    ): Double {
+        val rawFee = Math.abs(exec.feeValue)
+        if (rawFee == 0.0) return 0.0
+
+        val execPrice = if (exec.priceValue > 0.0) exec.priceValue
+        else if (exec.isBuy && avgBuyPrice > 0.0) avgBuyPrice
+        else if (exec.isSell && avgSellPrice > 0.0) avgSellPrice
+        else 0.0
+        val execQty = exec.qtyValue
+        val execTotalValue = if (exec.totalValue > 0.0) exec.totalValue else (execPrice * execQty)
+
+        val feeCurr = exec.feeCurrency.trim().uppercase(Locale.US)
+        val sym = exec.symbol.trim().uppercase(Locale.US)
+        val baseAsset = if (sym.endsWith("USDT")) sym.removeSuffix("USDT") else sym
+
+        // 1. Durum: feeCurrency USDT, USDC veya USD ise -> Değer doğrudan USDT'dir
+        if (feeCurr == "USDT" || feeCurr == "USDC" || feeCurr == "USD") {
+            return rawFee
+        }
+
+        // 2. Durum: Satış işlemi (SELL) -> Bybit Spot'ta satışta komisyon USDT'den kesilir
+        if (exec.isSell) {
+            if (feeCurr.isEmpty() || feeCurr == "USDT") {
+                return rawFee
+            }
+        }
+
+        // 3. Durum: Alış işlemi (BUY)
+        // Eğer rawFee, işlem miktarından büyükse veya ona çok yakınsa (ör. 0.0008 BTC alımında fee 0.036),
+        // bu değer kesinlikle BTC olamaz; zaten USDT tutarıdır! Asla BTC fiyatıyla çarpılmaz!
+        if (execQty > 0.0 && rawFee > (execQty * 0.02)) {
+            return rawFee
+        }
+
+        // 4. Durum: feeCurrency açıkça baseAsset (ör. "BTC", "MNT") ise veya boş olup rawFee makul bir coin miktarıysa:
+        if (feeCurr == baseAsset || (feeCurr.isEmpty() && exec.isBuy && execQty > 0.0 && rawFee <= (execQty * 0.02))) {
+            val converted = if (execPrice > 0.0) rawFee * execPrice else rawFee
+            // Güvenlik tavanı: Bir spot işlemde komisyon işlem tutarının %2'sinden büyük olamaz!
+            if (execTotalValue > 0.0 && converted > (execTotalValue * 0.02)) {
+                return rawFee
+            }
+            return converted
+        }
+
+        // 5. Fallback güvenlik denetimi:
+        // Eğer rawFee işlem hacminin %5'inden fazlaysa ve makul bir feeRate varsa (ör. 0.001)
+        val feeRate = Math.abs(exec.feeRate.toDoubleOrNull() ?: 0.0)
+        if (execTotalValue > 0.0 && rawFee > (execTotalValue * 0.05) && feeRate > 0.0 && feeRate < 0.05) {
+            return execTotalValue * feeRate
+        }
+
+        return rawFee
+    }
+
+    /**
+     * Kripto para miktarlarını (BTC, ETH, MNT vb.) sıfır basamağı kaybı olmadan akıllıca formatlar.
+     * Örneğin 0.0008 BTC -> "0.0008", 0.0025 BTC -> "0.0025", 1500 MNT -> "1,500.00"
+     */
+    fun formatCryptoQty(qty: Double): String {
+        val absQty = Math.abs(qty)
+        val sign = if (qty < 0) "-" else ""
+        return when {
+            absQty == 0.0 -> "0.00"
+            absQty < 0.00001 -> String.format(Locale.US, "%s%.6f", sign, absQty).trimEnd('0').trimEnd('.')
+            absQty < 0.001 -> String.format(Locale.US, "%s%.5f", sign, absQty).trimEnd('0').trimEnd('.')
+            absQty < 0.01 -> String.format(Locale.US, "%s%.4f", sign, absQty)
+            absQty < 1.0 -> String.format(Locale.US, "%s%.4f", sign, absQty)
+            absQty < 1000.0 -> String.format(Locale.US, "%s%.2f", sign, absQty)
+            else -> String.format(Locale.US, "%s%,.2f", sign, absQty)
+        }
+    }
+
+    fun formatCryptoQtySigned(qty: Double): String {
+        val clean = formatCryptoQty(Math.abs(qty))
+        return if (qty > 0) "+$clean" else if (qty < 0) "-$clean" else clean
     }
 }
