@@ -561,7 +561,7 @@ fun TradeAnalysisScreen(
                     }
                 }
             } else {
-                items(filteredExecutions, key = { it.execId.ifBlank { "${it.orderId}_${it.execTime}" } }) { exec ->
+                items(filteredExecutions, key = { it.execId.ifBlank { "${it.orderId}_${it.execTime}_${it.execQty}_${it.execPrice}" } }) { exec ->
                     ExecutionItemCard(exec = exec)
                 }
             }
@@ -2350,6 +2350,14 @@ private fun ExecutionItemCard(exec: BybitExecutionDto) {
                         color = sideColor,
                         fontFamily = FontFamily.Monospace
                     )
+                    if (exec.feeValue > 0.0) {
+                        val feeCurr = if (exec.feeCurrency.isNotBlank()) exec.feeCurrency else "USDT"
+                        Text(
+                            text = "Komisyon: ${RebalanceEngine.formatCryptoQty(exec.feeValue)} $feeCurr",
+                            fontSize = 9.sp,
+                            color = MinimalTextMuted
+                        )
+                    }
                 }
             }
         }

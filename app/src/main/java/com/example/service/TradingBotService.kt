@@ -437,10 +437,14 @@ class TradingBotService : Service() {
             val intent = Intent(context, TradingBotService::class.java).apply {
                 action = ACTION_START_BOT
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+            } catch (e: Exception) {
+                Log.e("TradingBotService", "Failed to start foreground service: ${e.message}", e)
             }
         }
 

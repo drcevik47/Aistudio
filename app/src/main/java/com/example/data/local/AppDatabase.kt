@@ -13,7 +13,7 @@ import com.example.data.local.entity.OrderEntity
 
 @Database(
     entities = [OrderEntity::class, LogEntity::class, ExchangeTradeEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
