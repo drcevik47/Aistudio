@@ -27,6 +27,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Calculate
 import androidx.compose.material.icons.filled.CalendarToday
@@ -106,22 +107,24 @@ fun OrderHistoryScreen(
     var showCalculateDialog by remember { mutableStateOf(false) }
     var showClearHistoryDialog by remember { mutableStateOf(false) }
     var activeFilterStartDateMillis by remember { mutableStateOf<Long?>(null) }
+    var activeFilterEndDateMillis by remember { mutableStateOf<Long?>(null) }
     val dateFormat = remember { SimpleDateFormat("dd.MM.yyyy HH:mm:ss", Locale.getDefault()) }
 
     // Screen Analysis: if custom filter is active, calculate from database starting from that date
-    val screenAnalysis = remember(orders, exchangeTrades, liveAnalysis, activeFilterStartDateMillis) {
-        if (activeFilterStartDateMillis != null) {
+    val screenAnalysis = remember(orders, exchangeTrades, liveAnalysis, activeFilterStartDateMillis, activeFilterEndDateMillis) {
+        if (activeFilterStartDateMillis != null || activeFilterEndDateMillis != null) {
             RebalanceEngine.computeLiveTradeAnalysis(
                 orders = orders,
                 exchangeTrades = exchangeTrades,
-                startTimestamp = activeFilterStartDateMillis
+                startTimestamp = activeFilterStartDateMillis,
+                endTimestamp = activeFilterEndDateMillis
             )
         } else {
             liveAnalysis
         }
     }
 
-    val filteredOrders = remember(orders, selectedFilter, activeFilterStartDateMillis) {
+    val filteredOrders = remember(orders, selectedFilter, activeFilterStartDateMillis, activeFilterEndDateMillis) {
         orders.filter { order ->
             val filterMatch = when (selectedFilter) {
                 "BUY" -> order.side.equals("Buy", ignoreCase = true)
@@ -129,8 +132,9 @@ fun OrderHistoryScreen(
                 "FILLED" -> order.status.equals("Filled", ignoreCase = true)
                 else -> true
             }
-            val dateMatch = activeFilterStartDateMillis == null || order.timestamp >= activeFilterStartDateMillis!!
-            filterMatch && dateMatch
+            val startMatch = activeFilterStartDateMillis == null || order.timestamp >= activeFilterStartDateMillis!!
+            val endMatch = activeFilterEndDateMillis == null || order.timestamp <= activeFilterEndDateMillis!!
+            filterMatch && startMatch && endMatch
         }
     }
 
@@ -200,8 +204,8 @@ fun OrderHistoryScreen(
                         onClick = { showCalculateDialog = true },
                         shape = RoundedCornerShape(10.dp),
                         colors = ButtonDefaults.filledTonalButtonColors(
-                            containerColor = if (activeFilterStartDateMillis != null) MinimalPrimary else MinimalPrimaryLight,
-                            contentColor = if (activeFilterStartDateMillis != null) Color.White else MinimalPrimary
+                            containerColor = if (activeFilterStartDateMillis != null || activeFilterEndDateMillis != null) MinimalPrimary else MinimalPrimaryLight,
+                            contentColor = if (activeFilterStartDateMillis != null || activeFilterEndDateMillis != null) Color.White else MinimalPrimary
                         ),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                         modifier = Modifier
@@ -215,7 +219,7 @@ fun OrderHistoryScreen(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = if (activeFilterStartDateMillis != null) "Hesaplandı" else "Hesapla",
+                            text = if (activeFilterStartDateMillis != null || activeFilterEndDateMillis != null) "Hesaplandı" else "Hesapla",
                             fontWeight = FontWeight.Bold,
                             fontSize = 13.sp
                         )
@@ -253,9 +257,19 @@ fun OrderHistoryScreen(
         }
 
         // Active Date Filter Banner (if applied from calculator)
-        if (activeFilterStartDateMillis != null) {
+        if (activeFilterStartDateMillis != null || activeFilterEndDateMillis != null) {
             item {
-                val filterDateStr = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date(activeFilterStartDateMillis!!))
+                val rangeStr = if (activeFilterStartDateMillis != null && activeFilterEndDateMillis != null) {
+                    val s = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date(activeFilterStartDateMillis!!))
+                    val e = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date(activeFilterEndDateMillis!!))
+                    "$s - $e Aralığı"
+                } else if (activeFilterStartDateMillis != null) {
+                    val s = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date(activeFilterStartDateMillis!!))
+                    "$s Tarihinden İtibaren"
+                } else {
+                    val e = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date(activeFilterEndDateMillis!!))
+                    "$e Tarihine Kadar"
+                }
                 Surface(
                     shape = RoundedCornerShape(12.dp),
                     color = MinimalPrimaryLight.copy(alpha = 0.7f),
@@ -280,7 +294,7 @@ fun OrderHistoryScreen(
                             Spacer(modifier = Modifier.width(8.dp))
                             Column {
                                 Text(
-                                    text = "Özel Filtre: $filterDateStr Tarihinden İtibaren",
+                                    text = "Özel Filtre: $rangeStr",
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = MinimalTextPrimary
@@ -293,7 +307,10 @@ fun OrderHistoryScreen(
                             }
                         }
                         TextButton(
-                            onClick = { activeFilterStartDateMillis = null },
+                            onClick = {
+                                activeFilterStartDateMillis = null
+                                activeFilterEndDateMillis = null
+                            },
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
                         ) {
                             Text(
@@ -447,8 +464,10 @@ fun OrderHistoryScreen(
             exchangeTrades = exchangeTrades,
             currentPrice = currentPrice,
             activeStartDateMillis = activeFilterStartDateMillis,
-            onApplyFilter = { newFilter ->
-                activeFilterStartDateMillis = newFilter
+            activeEndDateMillis = activeFilterEndDateMillis,
+            onApplyFilter = { newStart, newEnd ->
+                activeFilterStartDateMillis = newStart
+                activeFilterEndDateMillis = newEnd
             },
             onDismiss = { showCalculateDialog = false }
         )
@@ -510,7 +529,8 @@ fun CalculateTradesDialog(
     exchangeTrades: List<ExchangeTradeEntity>,
     currentPrice: Double,
     activeStartDateMillis: Long?,
-    onApplyFilter: (Long?) -> Unit,
+    activeEndDateMillis: Long? = null,
+    onApplyFilter: (Long?, Long?) -> Unit,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -519,14 +539,24 @@ fun CalculateTradesDialog(
             activeStartDateMillis ?: (System.currentTimeMillis() - 30L * 24 * 3600 * 1000L)
         )
     }
-    var selectedDaysOption by remember { mutableStateOf<Int?>(if (activeStartDateMillis == null) 30 else -1) }
+    var selectedEndDateMillis by remember {
+        mutableStateOf<Long?>(activeEndDateMillis)
+    }
+    var selectedDaysOption by remember {
+        mutableStateOf<Int?>(
+            if (activeStartDateMillis == null && activeEndDateMillis == null) 0
+            else if (activeStartDateMillis != null && activeEndDateMillis == null) 30
+            else -1
+        )
+    }
 
-    val analysis = remember(orders, exchangeTrades, selectedStartDateMillis) {
+    val analysis = remember(orders, exchangeTrades, selectedStartDateMillis, selectedEndDateMillis) {
         RebalanceEngine.computeLiveTradeAnalysis(
             orders = orders,
             exchangeTrades = exchangeTrades,
             symbol = "MNTUSDT",
-            startTimestamp = selectedStartDateMillis
+            startTimestamp = selectedStartDateMillis,
+            endTimestamp = selectedEndDateMillis
         )
     }
 
@@ -616,12 +646,34 @@ fun CalculateTradesDialog(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     // Tarih Seçici Başlık
-                    Text(
-                        text = "Hesaplama Başlangıç Tarihi:",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MinimalTextSecondary
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Hesaplama Tarih Aralığı:",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MinimalTextSecondary
+                        )
+                        if (selectedStartDateMillis != null || selectedEndDateMillis != null) {
+                            Text(
+                                text = "Tümünü Seç",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MinimalPrimary,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .clickable {
+                                        selectedDaysOption = 0
+                                        selectedStartDateMillis = null
+                                        selectedEndDateMillis = null
+                                    }
+                                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
 
                     // Hızlı Süre Butonları
                     Row(
@@ -643,9 +695,9 @@ fun CalculateTradesDialog(
 
                         quickPresets.forEach { (days, label) ->
                             val isSelected = if (days == 0) {
-                                selectedStartDateMillis == null
+                                selectedStartDateMillis == null && selectedEndDateMillis == null
                             } else {
-                                selectedDaysOption == days && selectedStartDateMillis != null
+                                selectedDaysOption == days && selectedStartDateMillis != null && selectedEndDateMillis == null
                             }
 
                             Surface(
@@ -661,9 +713,11 @@ fun CalculateTradesDialog(
                                         if (days == 0) {
                                             selectedDaysOption = 0
                                             selectedStartDateMillis = null
+                                            selectedEndDateMillis = null
                                         } else {
                                             selectedDaysOption = days
                                             selectedStartDateMillis = System.currentTimeMillis() - (days * 24L * 3600L * 1000L)
+                                            selectedEndDateMillis = null
                                         }
                                     }
                             ) {
@@ -676,28 +730,34 @@ fun CalculateTradesDialog(
                                 )
                             }
                         }
+                    }
 
-                        // Özel Tarih Seçici Çipi
-                        val isCustomSelected = selectedDaysOption == -1
-                        val customChipText = if (isCustomSelected && selectedStartDateMillis != null) {
-                            val dStr = SimpleDateFormat("dd.MM.yy", Locale.getDefault()).format(Date(selectedStartDateMillis!!))
-                            "📅 $dStr"
+                    // Başlangıç ve Bitiş Tarihi Seçim Kartları
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // 1. Başlangıç Tarihi
+                        val startStr = if (selectedStartDateMillis != null) {
+                            SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date(selectedStartDateMillis!!))
                         } else {
-                            "📅 Özel Tarih..."
+                            "En Baştan"
                         }
                         Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = if (isCustomSelected) MinimalPrimary else MinimalSurfaceElevated,
+                            shape = RoundedCornerShape(10.dp),
+                            color = MinimalSurfaceElevated,
                             border = BorderStroke(
                                 1.dp,
-                                if (isCustomSelected) MinimalPrimary else MinimalSurfaceBorder
+                                if (selectedDaysOption == -1 && selectedStartDateMillis != null) MinimalPrimary else MinimalSurfaceBorder
                             ),
                             modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
+                                .weight(1f)
+                                .clip(RoundedCornerShape(10.dp))
                                 .clickable {
-                                    val calendar = Calendar.getInstance()
+                                    val cal = Calendar.getInstance()
                                     if (selectedStartDateMillis != null) {
-                                        calendar.timeInMillis = selectedStartDateMillis!!
+                                        cal.timeInMillis = selectedStartDateMillis!!
                                     }
                                     DatePickerDialog(
                                         context,
@@ -713,30 +773,190 @@ fun CalculateTradesDialog(
                                             }
                                             selectedDaysOption = -1
                                             selectedStartDateMillis = pickedCal.timeInMillis
+                                            if (selectedEndDateMillis != null && selectedEndDateMillis!! < pickedCal.timeInMillis) {
+                                                val endPicked = Calendar.getInstance().apply {
+                                                    timeInMillis = pickedCal.timeInMillis
+                                                    set(Calendar.HOUR_OF_DAY, 23)
+                                                    set(Calendar.MINUTE, 59)
+                                                    set(Calendar.SECOND, 59)
+                                                    set(Calendar.MILLISECOND, 999)
+                                                }
+                                                selectedEndDateMillis = endPicked.timeInMillis
+                                            }
                                         },
-                                        calendar.get(Calendar.YEAR),
-                                        calendar.get(Calendar.MONTH),
-                                        calendar.get(Calendar.DAY_OF_MONTH)
+                                        cal.get(Calendar.YEAR),
+                                        cal.get(Calendar.MONTH),
+                                        cal.get(Calendar.DAY_OF_MONTH)
                                     ).apply {
-                                        datePicker.maxDate = System.currentTimeMillis()
+                                        val maxLimit = selectedEndDateMillis ?: System.currentTimeMillis()
+                                        datePicker.maxDate = maxLimit
                                         show()
                                     }
                                 }
                         ) {
-                            Text(
-                                text = customChipText,
-                                fontSize = 11.sp,
-                                fontWeight = if (isCustomSelected) FontWeight.Bold else FontWeight.SemiBold,
-                                color = if (isCustomSelected) Color.White else MinimalPrimary,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                            )
+                            Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "BAŞLANGIÇ",
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MinimalTextMuted
+                                    )
+                                    Icon(
+                                        imageVector = Icons.Default.CalendarToday,
+                                        contentDescription = null,
+                                        tint = MinimalPrimary,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = startStr,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (selectedStartDateMillis != null) MinimalTextPrimary else MinimalTextSecondary,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+
+                        Icon(
+                            imageVector = Icons.Default.ArrowForward,
+                            contentDescription = null,
+                            tint = MinimalTextMuted,
+                            modifier = Modifier.size(14.dp)
+                        )
+
+                        // 2. Bitiş Tarihi
+                        val endStr = if (selectedEndDateMillis != null) {
+                            SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date(selectedEndDateMillis!!))
+                        } else {
+                            "Bugün / Şimdi"
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = MinimalSurfaceElevated,
+                            border = BorderStroke(
+                                1.dp,
+                                if (selectedDaysOption == -1 && selectedEndDateMillis != null) MinimalPrimary else MinimalSurfaceBorder
+                            ),
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable {
+                                    val cal = Calendar.getInstance()
+                                    if (selectedEndDateMillis != null) {
+                                        cal.timeInMillis = selectedEndDateMillis!!
+                                    }
+                                    DatePickerDialog(
+                                        context,
+                                        { _, year, month, dayOfMonth ->
+                                            val pickedCal = Calendar.getInstance().apply {
+                                                set(Calendar.YEAR, year)
+                                                set(Calendar.MONTH, month)
+                                                set(Calendar.DAY_OF_MONTH, dayOfMonth)
+                                                set(Calendar.HOUR_OF_DAY, 23)
+                                                set(Calendar.MINUTE, 59)
+                                                set(Calendar.SECOND, 59)
+                                                set(Calendar.MILLISECOND, 999)
+                                            }
+                                            selectedDaysOption = -1
+                                            selectedEndDateMillis = pickedCal.timeInMillis
+                                            if (selectedStartDateMillis != null && selectedStartDateMillis!! > pickedCal.timeInMillis) {
+                                                val startPicked = Calendar.getInstance().apply {
+                                                    timeInMillis = pickedCal.timeInMillis
+                                                    set(Calendar.HOUR_OF_DAY, 0)
+                                                    set(Calendar.MINUTE, 0)
+                                                    set(Calendar.SECOND, 0)
+                                                    set(Calendar.MILLISECOND, 0)
+                                                }
+                                                selectedStartDateMillis = startPicked.timeInMillis
+                                            }
+                                        },
+                                        cal.get(Calendar.YEAR),
+                                        cal.get(Calendar.MONTH),
+                                        cal.get(Calendar.DAY_OF_MONTH)
+                                    ).apply {
+                                        if (selectedStartDateMillis != null) {
+                                            datePicker.minDate = selectedStartDateMillis!!
+                                        }
+                                        datePicker.maxDate = System.currentTimeMillis() + 86400000L
+                                        show()
+                                    }
+                                }
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "BİTİŞ",
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MinimalTextMuted
+                                        )
+                                        Icon(
+                                            imageVector = Icons.Default.CalendarToday,
+                                            contentDescription = null,
+                                            tint = MinimalPrimary,
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = endStr,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (selectedEndDateMillis != null) MinimalTextPrimary else MinimalTextSecondary,
+                                        maxLines = 1
+                                    )
+                                }
+                                if (selectedEndDateMillis != null) {
+                                    IconButton(
+                                        onClick = {
+                                            selectedEndDateMillis = null
+                                            if (selectedStartDateMillis == null) {
+                                                selectedDaysOption = 0
+                                            }
+                                        },
+                                        modifier = Modifier.size(18.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "Bugün",
+                                            tint = MinimalTextMuted,
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
 
                     // Seçili Tarih Bilgi Şeridi
-                    val activeLabel = if (selectedStartDateMillis != null) {
+                    val activeLabel = if (selectedStartDateMillis != null && selectedEndDateMillis != null) {
+                        val formattedStart = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date(selectedStartDateMillis!!))
+                        val formattedEnd = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date(selectedEndDateMillis!!))
+                        "📅 $formattedStart – $formattedEnd Aralığı"
+                    } else if (selectedStartDateMillis != null) {
                         val formatted = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date(selectedStartDateMillis!!))
                         "📅 $formatted Tarihinden İtibaren"
+                    } else if (selectedEndDateMillis != null) {
+                        val formatted = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date(selectedEndDateMillis!!))
+                        "📅 $formatted Tarihine Kadar"
                     } else {
                         "📅 Kayıtlı Tüm Geçmiş"
                     }
@@ -1018,7 +1238,7 @@ fun CalculateTradesDialog(
 
                     Button(
                         onClick = {
-                            onApplyFilter(selectedStartDateMillis)
+                            onApplyFilter(selectedStartDateMillis, selectedEndDateMillis)
                             onDismiss()
                         },
                         shape = RoundedCornerShape(12.dp),

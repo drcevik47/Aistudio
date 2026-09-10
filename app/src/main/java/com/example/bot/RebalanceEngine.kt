@@ -259,7 +259,8 @@ object RebalanceEngine {
         exchangeTrades: List<ExchangeTradeEntity> = emptyList(),
         apiAnalysis: TradeAnalysisResult? = null,
         symbol: String = "MNTUSDT",
-        startTimestamp: Long? = null
+        startTimestamp: Long? = null,
+        endTimestamp: Long? = null
     ): TradeAnalysisResult {
         // Collect all distinct registered executions from exchangeTrades and orders
         val allExecutions = mutableListOf<BybitExecutionDto>()
@@ -319,22 +320,31 @@ object RebalanceEngine {
             }
         }
 
-        val rangeLabel = if (startTimestamp != null && startTimestamp > 0L) {
+        val rangeLabel = if (startTimestamp != null && startTimestamp > 0L && endTimestamp != null && endTimestamp > 0L) {
+            val startStr = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date(startTimestamp))
+            val endStr = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date(endTimestamp))
+            "$startStr - $endStr"
+        } else if (startTimestamp != null && startTimestamp > 0L) {
             val dateStr = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date(startTimestamp))
             "$dateStr Tarihinden İtibaren"
+        } else if (endTimestamp != null && endTimestamp > 0L) {
+            val endStr = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date(endTimestamp))
+            "$endStr Tarihine Kadar"
         } else {
             "Kayıtlı Tüm Geçmiş"
         }
         val calculatedDaysRange = if (startTimestamp != null && startTimestamp > 0L) {
-            ((System.currentTimeMillis() - startTimestamp) / (24L * 3600L * 1000L)).toInt().coerceAtLeast(1)
+            val endRef = if (endTimestamp != null && endTimestamp > 0L) endTimestamp else System.currentTimeMillis()
+            ((endRef - startTimestamp) / (24L * 3600L * 1000L)).toInt().coerceAtLeast(1)
         } else {
             0
         }
 
         val activeExecutions = allExecutions.filter { exec ->
-            val timeMatch = startTimestamp == null || startTimestamp <= 0L || exec.timeMillis >= startTimestamp
+            val startTimeMatch = startTimestamp == null || startTimestamp <= 0L || exec.timeMillis >= startTimestamp
+            val endTimeMatch = endTimestamp == null || endTimestamp <= 0L || exec.timeMillis <= endTimestamp
             val symbolMatch = symbol.isBlank() || symbol.equals("ALL", ignoreCase = true) || exec.symbol.equals(symbol, ignoreCase = true)
-            timeMatch && symbolMatch
+            startTimeMatch && endTimeMatch && symbolMatch
         }
 
         if (activeExecutions.isNotEmpty()) {
@@ -387,7 +397,7 @@ object RebalanceEngine {
         }
 
         // Fallback to apiAnalysis if provided and no activeExecutions found (and no date filter was set)
-        if (startTimestamp == null && apiAnalysis != null && apiAnalysis.executions.isNotEmpty()) {
+        if (startTimestamp == null && endTimestamp == null && apiAnalysis != null && apiAnalysis.executions.isNotEmpty()) {
             return apiAnalysis
         }
 
