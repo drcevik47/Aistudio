@@ -28,6 +28,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Calculate
 import androidx.compose.material.icons.filled.CalendarToday
@@ -108,6 +110,7 @@ fun OrderHistoryScreen(
     var showClearHistoryDialog by remember { mutableStateOf(false) }
     var activeFilterStartDateMillis by remember { mutableStateOf<Long?>(null) }
     var activeFilterEndDateMillis by remember { mutableStateOf<Long?>(null) }
+    val context = LocalContext.current
 
     // Distinct traded symbols from DB, with MNT always positioned first as the default
     val availableSymbols = remember(orders, exchangeTrades) {
@@ -221,6 +224,29 @@ fun OrderHistoryScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    val hasHistory = orders.isNotEmpty() || exchangeTrades.isNotEmpty()
+
+                    // Paylaş Butonu
+                    if (hasHistory) {
+                        IconButton(
+                            onClick = {
+                                OrderHistoryExporter.shareOrderHistoryAsFile(context, orders, exchangeTrades)
+                            },
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(MinimalPrimaryLight)
+                                .testTag("share_trades_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Share,
+                                contentDescription = "Geçmişi Paylaş",
+                                tint = MinimalPrimary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+
                     // Hesapla Butonu
                     FilledTonalButton(
                         onClick = { showCalculateDialog = true },
@@ -248,7 +274,6 @@ fun OrderHistoryScreen(
                     }
 
                     // Sıfırla / Temizle Butonu (Hesapla kutusunun hemen sağında yer alır)
-                    val hasHistory = orders.isNotEmpty() || exchangeTrades.isNotEmpty()
                     IconButton(
                         onClick = {
                             if (hasHistory) {
