@@ -26,40 +26,22 @@ object OrderHistoryExporter {
             val file = File(logsDir, fileName)
             
             val reportContent = buildString {
-                appendLine("================================================================================")
-                appendLine("🤖 BYBIT SPOT REBALANCER - İŞLEM GEÇMİŞİ RAPORU (.TXT)")
-                appendLine("================================================================================")
-                appendLine("Dışa Aktarma Tarihi: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())}")
-                appendLine("Toplam Bot Emri    : ${orders.size}")
-                appendLine("Toplam Borsa İşlemi: ${exchangeTrades.size}")
-                appendLine("================================================================================")
-                appendLine()
+                val filledOrders = orders.filter { it.status.equals("Filled", ignoreCase = true) }
                 
-                if (orders.isNotEmpty()) {
-                    appendLine("--------------------------------------------------------------------------------")
-                    appendLine("BOT EMİRLERİ (${orders.size} Kayıt)")
-                    appendLine("--------------------------------------------------------------------------------")
-                    orders.sortedByDescending { it.timestamp }.forEach { order ->
-                        val date = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(order.timestamp))
-                        appendLine("[$date] ${order.side} ${order.qty} ${order.symbol} @ $${order.price} | Tipi: ${order.triggerReason} | Durum: ${order.status}")
-                    }
-                    appendLine()
-                }
+                val allRecords = mutableListOf<Pair<Long, String>>()
 
-                if (exchangeTrades.isNotEmpty()) {
-                    appendLine("--------------------------------------------------------------------------------")
-                    appendLine("BORSA İŞLEMLERİ (${exchangeTrades.size} Kayıt)")
-                    appendLine("--------------------------------------------------------------------------------")
-                    exchangeTrades.sortedByDescending { it.timeMillis }.forEach { trade ->
-                        val date = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(trade.timeMillis))
-                        appendLine("[$date] ${trade.side} ${trade.execQty} ${trade.symbol} @ $${trade.execPrice} | İşlem ID: ${trade.execId}")
-                    }
-                    appendLine()
+                filledOrders.forEach { order ->
+                    val date = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(order.timestamp))
+                    allRecords.add(Pair(order.timestamp, "[$date] ${order.side} ${order.qty} ${order.symbol} @ $${order.price}"))
                 }
                 
-                appendLine("================================================================================")
-                appendLine("RAPOR SONU")
-                appendLine("================================================================================")
+                exchangeTrades.forEach { trade ->
+                    val date = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(trade.timeMillis))
+                    allRecords.add(Pair(trade.timeMillis, "[$date] ${trade.side} ${trade.execQty} ${trade.symbol} @ $${trade.execPrice}"))
+                }
+                
+                val distinctLines = allRecords.sortedByDescending { it.first }.map { it.second }.distinct()
+                distinctLines.forEach { appendLine(it) }
             }
             
             file.writeText(reportContent, Charsets.UTF_8)
