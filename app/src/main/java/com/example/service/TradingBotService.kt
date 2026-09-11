@@ -3,10 +3,12 @@ package com.example.service
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.AlarmManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
@@ -36,6 +38,7 @@ class TradingBotService : Service() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
 
     private lateinit var preferences: BotPreferences
     private lateinit var repository: BybitRepository
@@ -73,6 +76,7 @@ class TradingBotService : Service() {
             ACTION_START_BOT, null -> {
                 startForeground(NOTIFICATION_ID, buildForegroundNotification("Bybit Bot Başlatılıyor..."))
                 startBot()
+                scheduleKeepAliveAlarm()
             }
         }
         return START_STICKY
@@ -89,8 +93,16 @@ class TradingBotService : Service() {
             }
             // Acquire / Refresh with 24 hours duration
             wakeLock?.acquire(24 * 60 * 60 * 1000L)
+
+            if (wifiLock == null) {
+                val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+                @Suppress("DEPRECATION")
+                wifiLock = wifiManager?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "BybitBot::TradingWifiLock")
+                wifiLock?.setReferenceCounted(false)
+            }
+            wifiLock?.acquire()
         } catch (e: Exception) {
-            Log.e("TradingBotService", "WakeLock acquire error", e)
+            Log.e("TradingBotService", "WakeLock/WifiLock acquire error", e)
         }
     }
 
@@ -383,6 +395,7 @@ class TradingBotService : Service() {
         isBotLoopRunning.set(false)
         preferences.isBotActive = false
         pollingJob?.cancel()
+        cancelKeepAliveAlarm()
         wsClient.stop()
         serviceScope.launch {
             repository.log(LogLevel.INFO, "BotService", "Bot durduruldu")
@@ -415,10 +428,51 @@ class TradingBotService : Service() {
         }
     }
 
+    private fun scheduleKeepAliveAlarm() {
+        try {
+            val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            val intent = Intent(this, TradingBotService::class.java).apply {
+                action = ACTION_START_BOT
+            }
+            val pendingIntent = PendingIntent.getService(
+                this, 1001, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            // Schedule alarm to fire roughly every 15 minutes to restart service if killed
+            alarmManager.setRepeating(
+                AlarmManager.RTC_WAKEUP,
+                System.currentTimeMillis() + 15 * 60 * 1000L,
+                15 * 60 * 1000L,
+                pendingIntent
+            )
+        } catch (e: Exception) {
+            Log.e("TradingBotService", "Failed to schedule keep-alive alarm", e)
+        }
+    }
+
+    private fun cancelKeepAliveAlarm() {
+        try {
+            val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            val intent = Intent(this, TradingBotService::class.java).apply {
+                action = ACTION_START_BOT
+            }
+            val pendingIntent = PendingIntent.getService(
+                this, 1001, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            alarmManager.cancel(pendingIntent)
+        } catch (e: Exception) {
+            Log.e("TradingBotService", "Failed to cancel keep-alive alarm", e)
+        }
+    }
+
     override fun onDestroy() {
         stopBot()
         serviceScope.cancel()
         wakeLock?.let {
+            if (it.isHeld) it.release()
+        }
+        wifiLock?.let {
             if (it.isHeld) it.release()
         }
         super.onDestroy()
