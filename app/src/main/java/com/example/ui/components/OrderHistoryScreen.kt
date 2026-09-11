@@ -230,7 +230,7 @@ fun OrderHistoryScreen(
                     if (hasHistory) {
                         IconButton(
                             onClick = {
-                                OrderHistoryExporter.shareOrderHistoryAsFile(context, orders, exchangeTrades)
+                                OrderHistoryExporter.shareOrderHistoryAsFile(context, orders, exchangeTrades, selectedSymbol)
                             },
                             modifier = Modifier
                                 .size(36.dp)

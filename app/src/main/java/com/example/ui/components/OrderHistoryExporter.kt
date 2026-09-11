@@ -16,7 +16,8 @@ object OrderHistoryExporter {
     fun shareOrderHistoryAsFile(
         context: Context,
         orders: List<OrderEntity>,
-        exchangeTrades: List<ExchangeTradeEntity>
+        exchangeTrades: List<ExchangeTradeEntity>,
+        selectedSymbol: String
     ) {
         try {
             val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
@@ -26,7 +27,14 @@ object OrderHistoryExporter {
             val file = File(logsDir, fileName)
             
             val reportContent = buildString {
-                val filledOrders = orders.filter { it.status.equals("Filled", ignoreCase = true) }
+                val filledOrders = orders.filter { 
+                    it.status.equals("Filled", ignoreCase = true) && 
+                    (selectedSymbol == "ALL" || it.symbol.equals(selectedSymbol, ignoreCase = true) || (selectedSymbol == "MNTUSDT" && it.symbol.isBlank()))
+                }
+                
+                val filteredTrades = exchangeTrades.filter {
+                    selectedSymbol == "ALL" || it.symbol.equals(selectedSymbol, ignoreCase = true) || (selectedSymbol == "MNTUSDT" && it.symbol.isBlank())
+                }
                 
                 val allRecords = mutableListOf<Pair<Long, String>>()
 
@@ -35,7 +43,7 @@ object OrderHistoryExporter {
                     allRecords.add(Pair(order.timestamp, "[$date] ${order.side} ${order.qty} ${order.symbol} @ $${order.price}"))
                 }
                 
-                exchangeTrades.forEach { trade ->
+                filteredTrades.forEach { trade ->
                     val date = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(trade.timeMillis))
                     allRecords.add(Pair(trade.timeMillis, "[$date] ${trade.side} ${trade.execQty} ${trade.symbol} @ $${trade.execPrice}"))
                 }
@@ -59,7 +67,7 @@ object OrderHistoryExporter {
                 putExtra(Intent.EXTRA_SUBJECT, "Bot İşlem Geçmişi Raporu ($timestamp).txt")
                 putExtra(
                     Intent.EXTRA_TEXT,
-                    "Bybit Rebalancer Bot işlem geçmişi raporu ektedir: $fileName.\nToplam: ${orders.size + exchangeTrades.size} kayıt."
+                    "Bybit Rebalancer Bot işlem geçmişi raporu ektedir: $fileName."
                 )
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
