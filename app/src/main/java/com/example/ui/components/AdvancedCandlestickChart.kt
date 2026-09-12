@@ -13,6 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
@@ -47,13 +48,13 @@ fun formatVolume(volume: Double): String {
 }
 
 fun formatPriceInfo(value: Double): String {
-    // Basic formatting for OHLC info
     return if (value < 1.0) String.format(Locale.US, "%.5f", value)
     else if (value < 10.0) String.format(Locale.US, "%.4f", value)
     else if (value < 1000.0) String.format(Locale.US, "%.2f", value)
     else String.format(Locale.US, "%.1f", value)
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AdvancedCandlestickChart(
     klines: List<KlineData>,
@@ -69,7 +70,7 @@ fun AdvancedCandlestickChart(
     val textMeasurer = rememberTextMeasurer()
     val density = LocalDensity.current
     
-    val yAxisWidthPx = with(density) { 50.dp.toPx() }
+    val yAxisWidthPx = with(density) { 55.dp.toPx() }
     val xAxisHeightPx = with(density) { 20.dp.toPx() }
     
     val timeFormatter = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
@@ -118,7 +119,7 @@ fun AdvancedCandlestickChart(
             val chartWidth = boxWidthPx - yAxisWidthPx
             val chartHeight = boxHeightPx - xAxisHeightPx
             
-            val baseCandleWidth = with(density) { 6.dp.toPx() }
+            val baseCandleWidth = with(density) { 4.dp.toPx() } // Made slightly thinner
             val candleSpacing = with(density) { 1.dp.toPx() }
             val totalCandleWidth = baseCandleWidth + candleSpacing
             val zoomedCandleWidth = totalCandleWidth * scaleX
@@ -151,7 +152,8 @@ fun AdvancedCandlestickChart(
                     .pointerInput(Unit) {
                         detectTransformGestures { centroid, pan, zoom, _ ->
                             offsetX += pan.x
-                            val newScaleX = (scaleX * zoom).coerceIn(0.5f, 50f)
+                            // Allow much further zoom out (0.1f) to see history
+                            val newScaleX = (scaleX * zoom).coerceIn(0.1f, 50f)
                             val diffX = centroid.x - offsetX
                             offsetX -= diffX * (newScaleX / scaleX - 1)
                             scaleX = newScaleX
@@ -175,7 +177,7 @@ fun AdvancedCandlestickChart(
                 offsetX = clampedOffsetX
                 val candleBodyWidth = baseCandleWidth * scaleX
                 val volAreaHeight = chartHeight * 0.15f
-                val priceAreaHeight = chartHeight * 0.75f // Leave top padding
+                val priceAreaHeight = chartHeight * 0.75f
 
                 if (visibleKlines.isEmpty()) return@Canvas
 
@@ -193,7 +195,8 @@ fun AdvancedCandlestickChart(
                 val hGridLines = 4
                 for (i in 0..hGridLines) {
                     val y = i * (priceAreaHeight / hGridLines) + priceTopMargin
-                    drawLine(MinimalSurfaceBorderLight, Offset(0f, y), Offset(chartWidth, y), 1f)
+                    // Softer grid line alpha
+                    drawLine(MinimalSurfaceBorderLight.copy(alpha = 0.5f), Offset(0f, y), Offset(chartWidth, y), 1f)
                     
                     val priceVal = maxVisiblePrice - (i * priceRange / hGridLines)
                     val priceText = formatPriceInfo(priceVal)
@@ -208,7 +211,7 @@ fun AdvancedCandlestickChart(
                 val vGridLines = 3
                 for (i in 1..vGridLines) {
                     val x = i * (chartWidth / (vGridLines + 1))
-                    drawLine(MinimalSurfaceBorderLight, Offset(x, 0f), Offset(x, chartHeight), 1f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 10f), 0f))
+                    drawLine(MinimalSurfaceBorderLight.copy(alpha = 0.5f), Offset(x, 0f), Offset(x, chartHeight), 1f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 10f), 0f))
                     
                     val floatIdx = (x - offsetX) / zoomedCandleWidth
                     val idx = floatIdx.toInt().coerceIn(0, sortedKlines.lastIndex)
@@ -247,10 +250,10 @@ fun AdvancedCandlestickChart(
                     drawRect(candleColor, Offset(cx - candleBodyWidth / 2f, top), Size(candleBodyWidth, bodyHeight))
                     
                     val volHeight = (kline.volume * yVolStep).toFloat()
-                    drawRect(candleColor.copy(alpha = 0.4f), Offset(cx - candleBodyWidth / 2f, chartHeight - volHeight), Size(candleBodyWidth, volHeight))
+                    drawRect(candleColor.copy(alpha = 0.3f), Offset(cx - candleBodyWidth / 2f, chartHeight - volHeight), Size(candleBodyWidth, volHeight))
                 }
 
-                // Draw Executions
+                // Draw Executions (Modern dots instead of large triangles)
                 if (sortedKlines.isNotEmpty()) {
                     val firstTime = sortedKlines.first().timeMillis
                     val lastTime = sortedKlines.last().timeMillis + (sortedKlines.last().timeMillis - sortedKlines[0].timeMillis)/sortedKlines.size
@@ -262,21 +265,20 @@ fun AdvancedCandlestickChart(
                             val yPrice = ((maxVisiblePrice - exec.priceValue) * yPriceStep).toFloat() + priceTopMargin
                             
                             if (cx in 0f..chartWidth) {
-                                val markerSize = with(density){6.dp.toPx()}
-                                val markerPath = Path()
-                                if (exec.isBuy) {
-                                    markerPath.moveTo(cx, yPrice + markerSize * 0.5f)
-                                    markerPath.lineTo(cx - markerSize, yPrice + markerSize * 2f)
-                                    markerPath.lineTo(cx + markerSize, yPrice + markerSize * 2f)
-                                    markerPath.close()
-                                    drawPath(markerPath, MinimalSuccessDark)
-                                } else {
-                                    markerPath.moveTo(cx, yPrice - markerSize * 0.5f)
-                                    markerPath.lineTo(cx - markerSize, yPrice - markerSize * 2f)
-                                    markerPath.lineTo(cx + markerSize, yPrice - markerSize * 2f)
-                                    markerPath.close()
-                                    drawPath(markerPath, MinimalErrorDark)
-                                }
+                                val markerRadius = with(density){ 3.dp.toPx() }
+                                val dotColor = if (exec.isBuy) MinimalSuccessDark else MinimalErrorDark
+                                
+                                // Draw white/bg border for clarity
+                                drawCircle(
+                                    color = MinimalBg,
+                                    radius = markerRadius + with(density){1.dp.toPx()},
+                                    center = Offset(cx, yPrice)
+                                )
+                                drawCircle(
+                                    color = dotColor,
+                                    radius = markerRadius,
+                                    center = Offset(cx, yPrice)
+                                )
                             }
                         }
                     }
@@ -297,27 +299,49 @@ fun AdvancedCandlestickChart(
                         val priceAtTouch = maxVisiblePrice - ((touch.y - priceTopMargin) / yPriceStep)
                         val priceText = formatPriceInfo(priceAtTouch)
                         val priceLabelLayout = textMeasurer.measure(priceText, TextStyle(color = MinimalBg, fontSize = 10.sp, fontWeight = FontWeight.Bold))
-                        drawRect(MinimalTextPrimary, Offset(chartWidth, touch.y - priceLabelLayout.size.height/2f - with(density){2.dp.toPx()}), Size(yAxisWidthPx, priceLabelLayout.size.height.toFloat() + with(density){4.dp.toPx()}))
-                        drawText(textLayoutResult = priceLabelLayout, topLeft = Offset(chartWidth + with(density){4.dp.toPx()}, touch.y - priceLabelLayout.size.height/2f))
+                        val priceRectHeight = priceLabelLayout.size.height.toFloat() + with(density){8.dp.toPx()}
+                        val priceRectY = touch.y - priceRectHeight/2f
+                        
+                        drawRoundRect(
+                            color = MinimalTextPrimary,
+                            topLeft = Offset(chartWidth, priceRectY),
+                            size = Size(yAxisWidthPx, priceRectHeight),
+                            cornerRadius = CornerRadius(with(density){4.dp.toPx()})
+                        )
+                        drawText(
+                            textLayoutResult = priceLabelLayout,
+                            topLeft = Offset(chartWidth + with(density){6.dp.toPx()}, touch.y - priceLabelLayout.size.height/2f)
+                        )
 
                         // Date tag
                         val dateLabel = fullDateFormatter.format(Date(kline.timeMillis))
                         val dateLabelLayout = textMeasurer.measure(dateLabel, TextStyle(color = MinimalBg, fontSize = 10.sp, fontWeight = FontWeight.Bold))
+                        val dateRectWidth = dateLabelLayout.size.width.toFloat() + with(density){12.dp.toPx()}
                         
                         // Ensure date tag stays within bounds
-                        val dateTagX = (cx - dateLabelLayout.size.width/2f).coerceIn(0f, chartWidth - dateLabelLayout.size.width)
-                        drawRect(MinimalTextPrimary, Offset(dateTagX - with(density){4.dp.toPx()}, chartHeight), Size(dateLabelLayout.size.width.toFloat() + with(density){8.dp.toPx()}, xAxisHeightPx))
-                        drawText(textLayoutResult = dateLabelLayout, topLeft = Offset(dateTagX, chartHeight + (xAxisHeightPx - dateLabelLayout.size.height)/2f))
+                        val dateTagX = (cx - dateRectWidth/2f).coerceIn(0f, chartWidth - dateRectWidth)
+                        
+                        drawRoundRect(
+                            color = MinimalTextPrimary,
+                            topLeft = Offset(dateTagX, chartHeight),
+                            size = Size(dateRectWidth, xAxisHeightPx),
+                            cornerRadius = CornerRadius(with(density){4.dp.toPx()})
+                        )
+                        drawText(
+                            textLayoutResult = dateLabelLayout,
+                            topLeft = Offset(dateTagX + with(density){6.dp.toPx()}, chartHeight + (xAxisHeightPx - dateLabelLayout.size.height)/2f)
+                        )
                     }
                 }
             }
             
-            // OHLC Overlay Component (Rendered via standard Compose over Canvas)
-            Row(
+            // OHLC Overlay Component using FlowRow for perfect wrapping
+            FlowRow(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 6.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 val isUp = displayedKline.close >= displayedKline.open
                 val color = if (isUp) MinimalSuccessDark else MinimalErrorDark

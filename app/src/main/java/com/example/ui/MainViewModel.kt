@@ -747,7 +747,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun fetchChartData(symbol: String, interval: String) {
         viewModelScope.launch {
             _uiState.update { it.copy(chartInterval = interval) }
-            val result = repository.getKlines(symbol = symbol, interval = interval, limit = 200)
+            val result = repository.getKlines(symbol = symbol, interval = interval, limit = 1000)
             result.onSuccess { klineResult ->
                 val klines = klineResult.list.mapNotNull { entry ->
                     try {
