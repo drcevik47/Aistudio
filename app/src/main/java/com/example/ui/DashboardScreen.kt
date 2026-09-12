@@ -464,6 +464,17 @@ fun DashboardScreen(
                                 onEditBasePriceClick = { showEditBasePriceDialog = true }
                             )
                         }
+                        
+                        // Simulator Card
+                        item {
+                            Spacer(modifier = Modifier.height(16.dp))
+                            com.example.ui.components.SimulationCard(
+                                currentUsdtBalance = state.portfolioAnalysis?.usdtBalance ?: 0.0,
+                                currentMntBalance = state.portfolioAnalysis?.mntBalance ?: 0.0,
+                                currentBasePrice = state.lastRebalancePrice,
+                                stepPercent = state.stepPercent
+                            )
+                        }
                     }
                 }
                 1 -> {
