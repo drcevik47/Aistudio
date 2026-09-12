@@ -1,3 +1,5 @@
+#!/bin/bash
+cat << 'INNER' > app/src/main/java/com/example/ui/components/AdvancedCandlestickChart.kt
 package com.example.ui.components
 
 import androidx.compose.foundation.Canvas
@@ -331,3 +333,4 @@ fun AdvancedCandlestickChart(
         }
     }
 }
+INNER
