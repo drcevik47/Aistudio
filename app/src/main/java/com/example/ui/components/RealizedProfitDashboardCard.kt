@@ -10,6 +10,7 @@ import androidx.compose.material.icons.filled.AutoGraph
 import androidx.compose.material.icons.filled.Savings
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -18,14 +19,23 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.remote.model.TradeAnalysisResult
+import com.example.ui.MainUiState
 import com.example.ui.theme.*
 import java.util.Locale
 import com.example.bot.RebalanceEngine
 
 @Composable
 fun RealizedProfitDashboardCard(
-    analysis: TradeAnalysisResult?
+    analysis: TradeAnalysisResult?,
+    uiState: MainUiState,
+    onIntervalChanged: (String) -> Unit
 ) {
+    LaunchedEffect(Unit) {
+        if (uiState.chartKlines.isEmpty()) {
+            onIntervalChanged("15") // Fetch initial 15m interval
+        }
+    }
+
     if (analysis == null || analysis.totalBuyQty == 0.0) return
 
     val isProfitable = analysis.netProfitUsdt >= 0.0
@@ -169,13 +179,18 @@ fun RealizedProfitDashboardCard(
             if (analysis.executions.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(
-                    text = "Ping Pong İşlem Haritası",
+                    text = "Gelişmiş İşlem Haritası",
                     fontSize = 10.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = MinimalTextPrimary,
                     modifier = Modifier.padding(bottom = 6.dp)
                 )
-                PingPongChart(executions = analysis.executions)
+                AdvancedCandlestickChart(
+                    klines = uiState.chartKlines,
+                    executions = analysis.executions,
+                    selectedInterval = uiState.chartInterval,
+                    onIntervalChanged = onIntervalChanged
+                )
             }
         }
     }

@@ -438,6 +438,8 @@ fun DashboardScreen(
                         // Realized Profit Dashboard Card
                         item {
                             com.example.ui.components.RealizedProfitDashboardCard(
+                                uiState = state,
+                                onIntervalChanged = { interval -> viewModel.fetchChartData("MNTUSDT", interval) },
                                 analysis = liveAnalysis
                             )
                         }
