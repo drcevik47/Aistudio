@@ -103,7 +103,7 @@ fun OrderHistoryScreen(
     currentPrice: Double = 0.0,
     onClearOrders: () -> Unit,
     onClearExchangeTrades: (() -> Unit)? = null,
-    onExportKlines: ((String, String, String, Int, android.content.Context) -> Unit)? = null,
+    onExportKlines: ((String, String, String, Long, Long, android.content.Context) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     var selectedFilter by remember { mutableStateOf("ALL") } // ALL, BUY, SELL, FILLED
@@ -678,77 +678,14 @@ fun OrderHistoryScreen(
         )
     }
 
-    if (showKlineExportDialog) {
-        var selectedInterval by remember { mutableStateOf("60") } // Default 1h
-        var selectedFormat by remember { mutableStateOf("CSV") }
-        var selectedLimit by remember { mutableStateOf(1000) }
-        val intervals = listOf("1" to "1dk", "5" to "5dk", "15" to "15dk", "60" to "1 Saat", "240" to "4 Saat", "D" to "1 Gün")
-        val formats = listOf("CSV", "JSON")
-        val limits = listOf(1000 to "1.000 Mum", 5000 to "5.000 Mum", 10000 to "10.000 Mum", 20000 to "20.000 Mum")
-
-        AlertDialog(
-            onDismissRequest = { showKlineExportDialog = false },
-            icon = { Icon(Icons.Default.ArrowDownward, contentDescription = null, tint = MinimalPrimary, modifier = Modifier.size(28.dp)) },
-            title = { Text("Fiyat Geçmişi (Kline) İndir", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
-            text = {
-                Column {
-                    Text("Bybit borsasından ${if (selectedSymbol == "ALL") "MNTUSDT" else selectedSymbol} fiyat geçmişini indirebilirsiniz.", fontSize = 13.sp, color = MinimalTextSecondary)
-                    Spacer(modifier = Modifier.height(16.dp))
-                    
-                    Text("Zaman Dilimi (Interval):", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        intervals.forEach { (value, label) ->
-                            FilterChip(
-                                selected = selectedInterval == value,
-                                onClick = { selectedInterval = value },
-                                label = { Text(label, fontSize = 12.sp) }
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text("Veri Miktarı:", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        limits.forEach { (value, label) ->
-                            FilterChip(
-                                selected = selectedLimit == value,
-                                onClick = { selectedLimit = value },
-                                label = { Text(label, fontSize = 12.sp) }
-                            )
-                        }
-                    }
-                    
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text("Dosya Formatı:", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        formats.forEach { format ->
-                            FilterChip(
-                                selected = selectedFormat == format,
-                                onClick = { selectedFormat = format },
-                                label = { Text(format, fontSize = 12.sp) }
-                            )
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                Button(onClick = {
-                    onExportKlines?.invoke(selectedSymbol, selectedInterval, selectedFormat, selectedLimit, context)
-                    showKlineExportDialog = false
-                }) {
-                    Text("İndir & Paylaş")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showKlineExportDialog = false }) { Text("İptal") }
-            },
-            containerColor = MinimalSurface,
-            shape = RoundedCornerShape(16.dp)
-        )
-    }
+    KlineExportDialog(
+        showDialog = showKlineExportDialog,
+        onDismiss = { showKlineExportDialog = false },
+        selectedSymbol = selectedSymbol,
+        onExport = { symbol, interval, format, start, end, ctx ->
+            onExportKlines?.invoke(symbol, interval, format, start, end, ctx)
+        }
+    )
 }
 
 @Composable

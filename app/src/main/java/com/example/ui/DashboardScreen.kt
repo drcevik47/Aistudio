@@ -483,8 +483,8 @@ fun DashboardScreen(
                         currentPrice = state.currentPrice,
                         onClearOrders = { viewModel.clearOrders() },
                         onClearExchangeTrades = { viewModel.clearLocalExchangeDatabase() },
-                        onExportKlines = { symbol, interval, format, limit, context ->
-                            viewModel.exportKlines(context, symbol, interval, format, limit)
+                        onExportKlines = { symbol, interval, format, start, end, context ->
+                            viewModel.exportKlines(context, symbol, interval, format, start, end)
                         }
                     )
                 }
