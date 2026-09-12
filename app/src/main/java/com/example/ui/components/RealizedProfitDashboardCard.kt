@@ -27,9 +27,8 @@ import com.example.bot.RebalanceEngine
 
 @Composable
 fun RealizedProfitDashboardCard(
-    tradeAnalysisState: TradeAnalysisUiState
+    analysis: TradeAnalysisResult?
 ) {
-    val analysis = tradeAnalysisState.analysis
     
     // Yalnızca analiz varsa (bot işlem yaptıysa/çektiyse) göster
     if (analysis == null || analysis.totalBuyQty == 0.0) return

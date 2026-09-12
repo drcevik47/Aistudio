@@ -438,7 +438,7 @@ fun DashboardScreen(
                         // Realized Profit Dashboard Card
                         item {
                             com.example.ui.components.RealizedProfitDashboardCard(
-                                tradeAnalysisState = tradeAnalysisState
+                                analysis = liveAnalysis
                             )
                         }
                         // Portfolio Status Card
