@@ -1,0 +1,40 @@
+--- app/src/main/java/com/example/ui/MainViewModel.kt
++++ app/src/main/java/com/example/ui/MainViewModel.kt
+@@ -34,6 +34,7 @@
+ import com.example.data.remote.model.OrderDto
+ import com.example.data.remote.model.TradeAnalysisResult
+ import com.example.data.remote.model.TradeSyncResult
++import com.example.ui.components.KlineExporter
+ import com.example.utils.CryptoEngine
+ import kotlinx.coroutines.Job
+ import kotlinx.coroutines.delay
+@@ -887,6 +888,27 @@
+         }
+     }
+ 
++    fun exportKlines(context: android.content.Context, symbol: String, interval: String, format: String) {
++        viewModelScope.launch {
++            try {
++                val effectiveSymbol = if (symbol == "ALL") "MNTUSDT" else symbol
++                
++                // Request 1000 candles as requested
++                val result = repository.getKlines(symbol = effectiveSymbol, interval = interval, limit = 1000)
++                
++                result.onSuccess { klineResult ->
++                    if (klineResult.list.isEmpty()) {
++                        android.widget.Toast.makeText(context, "Hiç kline verisi bulunamadı", android.widget.Toast.LENGTH_SHORT).show()
++                    } else {
++                        KlineExporter.shareKlinesAsFile(context, klineResult, effectiveSymbol, interval, format)
++                    }
++                }.onFailure { e ->
++                    android.widget.Toast.makeText(context, "Kline verisi alınamadı: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
++                }
++            } catch (e: Exception) {
++                android.widget.Toast.makeText(context, "Kline verisi alınırken hata oluştu", android.widget.Toast.LENGTH_SHORT).show()
++            }
++        }
++    }
++
+     override fun onCleared() {
+         super.onCleared()
+         stopBot()

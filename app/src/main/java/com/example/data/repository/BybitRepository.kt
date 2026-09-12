@@ -18,6 +18,7 @@ import com.example.data.remote.model.BybitOrderDto
 import com.example.data.remote.model.SpotTicker
 import com.example.data.remote.model.TradeAnalysisResult
 import com.example.data.remote.model.TradeSyncResult
+import com.example.data.remote.model.KlineResult
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.CancellationException
@@ -201,6 +202,33 @@ class BybitRepository(
             }
         } catch (e: Exception) {
             Log.e("Repository", "Failed to insert log", e)
+        }
+    }
+
+    suspend fun getKlines(symbol: String, interval: String, start: Long? = null, end: Long? = null, limit: Int = 1000): Result<KlineResult> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val api = createApiService(preferences.isTestnet)
+                val response = api.getKlines(
+                    symbol = symbol,
+                    interval = interval,
+                    start = start,
+                    end = end,
+                    limit = limit
+                )
+                if (response.isSuccessful) {
+                    val body = response.body()
+                    if (body != null && body.isSuccess && body.result != null) {
+                        Result.success(body.result)
+                    } else {
+                        Result.failure(Exception(body?.retMsg ?: "Kline alınamadı"))
+                    }
+                } else {
+                    Result.failure(Exception("HTTP ${response.code()}: ${response.message()}"))
+                }
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
         }
     }
 

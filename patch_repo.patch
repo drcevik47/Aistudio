@@ -1,0 +1,43 @@
+--- app/src/main/java/com/example/data/repository/BybitRepository.kt
++++ app/src/main/java/com/example/data/repository/BybitRepository.kt
+@@ -19,6 +19,7 @@
+ import com.example.data.remote.model.OrderDto
+ import com.example.data.remote.model.ServerTimeResult
+ import com.example.data.remote.model.TickerDto
++import com.example.data.remote.model.KlineResult
+ import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.withContext
+ import retrofit2.HttpException
+@@ -370,6 +371,28 @@
+         }
+     }
+ 
++    suspend fun getKlines(symbol: String, interval: String, start: Long? = null, end: Long? = null, limit: Int = 1000): Result<KlineResult> {
++        return withContext(Dispatchers.IO) {
++            try {
++                val response = api.getKlines(
++                    symbol = symbol,
++                    interval = interval,
++                    start = start,
++                    end = end,
++                    limit = limit
++                )
++                if (response.isSuccessful) {
++                    val body = response.body()
++                    if (body != null && body.isSuccess && body.result != null) {
++                        Result.success(body.result)
++                    } else {
++                        Result.failure(Exception(body?.retMsg ?: "Kline alınamadı"))
++                    }
++                } else {
++                    Result.failure(Exception("HTTP ${response.code()}: ${response.message()}"))
++                }
++            } catch (e: Exception) {
++                Result.failure(e)
++            }
++        }
++    }
++
+     /**
+      * Tüm hesaplar iptal edildikten sonra temiz başlangıç için bakiye kontrolü yapar.
+      * @param plan RebalancePlan (kullanılmak istenecek bakiyeler için opsiyonel).

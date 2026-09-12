@@ -1,0 +1,72 @@
+--- app/src/main/java/com/example/ui/components/OrderHistoryScreen.kt
++++ app/src/main/java/com/example/ui/components/OrderHistoryScreen.kt
+@@ -34,6 +34,7 @@
+ import androidx.compose.material.icons.filled.DeleteSweep
+ import androidx.compose.material.icons.filled.History
+ import androidx.compose.material.icons.filled.ReceiptLong
++import androidx.compose.material.icons.filled.FileDownload
+ import androidx.compose.material3.AlertDialog
+ import androidx.compose.material3.Button
+ import androidx.compose.material3.ButtonDefaults
+@@ -677,4 +678,61 @@
+             shape = RoundedCornerShape(16.dp)
+         )
+     }
++
++    if (showKlineExportDialog) {
++        var selectedInterval by remember { mutableStateOf("60") } // Default 1h
++        var selectedFormat by remember { mutableStateOf("CSV") }
++        val intervals = listOf("1" to "1dk", "5" to "5dk", "15" to "15dk", "60" to "1 Saat", "240" to "4 Saat", "D" to "1 Gün")
++        val formats = listOf("CSV", "JSON")
++
++        AlertDialog(
++            onDismissRequest = { showKlineExportDialog = false },
++            icon = { Icon(Icons.Default.FileDownload, contentDescription = null, tint = MinimalPrimary, modifier = Modifier.size(28.dp)) },
++            title = { Text("Fiyat Geçmişi (Kline) İndir", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
++            text = {
++                Column {
++                    Text("Bybit borsasından ${if (selectedSymbol == "ALL") "MNTUSDT" else selectedSymbol} fiyat geçmişini indirebilirsiniz. (1000 mum)", fontSize = 13.sp, color = MinimalTextSecondary)
++                    Spacer(modifier = Modifier.height(16.dp))
++                    
++                    Text("Zaman Dilimi (Interval):", fontSize = 12.sp, fontWeight = FontWeight.Bold)
++                    Spacer(modifier = Modifier.height(8.dp))
++                    Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
++                        intervals.forEach { (value, label) ->
++                            FilterChip(
++                                selected = selectedInterval == value,
++                                onClick = { selectedInterval = value },
++                                label = { Text(label, fontSize = 12.sp) }
++                            )
++                        }
++                    }
++                    
++                    Spacer(modifier = Modifier.height(16.dp))
++                    Text("Dosya Formatı:", fontSize = 12.sp, fontWeight = FontWeight.Bold)
++                    Spacer(modifier = Modifier.height(8.dp))
++                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
++                        formats.forEach { format ->
++                            FilterChip(
++                                selected = selectedFormat == format,
++                                onClick = { selectedFormat = format },
++                                label = { Text(format, fontSize = 12.sp) }
++                            )
++                        }
++                    }
++                }
++            },
++            confirmButton = {
++                Button(onClick = {
++                    onExportKlines?.invoke(selectedSymbol, selectedInterval, selectedFormat, context)
++                    showKlineExportDialog = false
++                }) {
++                    Text("İndir & Paylaş")
++                }
++            },
++            dismissButton = {
++                TextButton(onClick = { showKlineExportDialog = false }) { Text("İptal") }
++            },
++            containerColor = MinimalSurface,
++            shape = RoundedCornerShape(16.dp)
++        )
++    }
+ }

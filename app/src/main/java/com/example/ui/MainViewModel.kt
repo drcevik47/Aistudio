@@ -655,6 +655,71 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun exportKlines(context: android.content.Context, symbol: String, interval: String, format: String, totalLimit: Int) {
+        viewModelScope.launch {
+            try {
+                val effectiveSymbol = if (symbol == "ALL" || symbol.isBlank()) "MNTUSDT" else symbol
+                android.widget.Toast.makeText(context, "Veriler indiriliyor... Lütfen bekleyin. (Hedef: $totalLimit)", android.widget.Toast.LENGTH_SHORT).show()
+                
+                var currentEnd: Long? = null
+                val allKlinesList = mutableListOf<List<String>>()
+                var remaining = totalLimit
+                var apiError: String? = null
+                
+                while (remaining > 0) {
+                    val limitToFetch = minOf(remaining, 1000)
+                    val result = repository.getKlines(symbol = effectiveSymbol, interval = interval, end = currentEnd, limit = limitToFetch)
+                    
+                    if (result.isSuccess) {
+                        val klineResult = result.getOrNull()
+                        val data = klineResult?.list ?: emptyList()
+                        
+                        if (data.isEmpty()) break
+                        
+                        allKlinesList.addAll(data)
+                        remaining -= data.size
+                        
+                        if (data.size < limitToFetch) {
+                            // Reached the oldest available data
+                            break
+                        }
+                        
+                        // The oldest candle is the last one in the list
+                        val oldestTimestamp = data.last()[0].toLongOrNull()
+                        if (oldestTimestamp != null) {
+                            currentEnd = oldestTimestamp - 1
+                        } else {
+                            break
+                        }
+                    } else {
+                        apiError = result.exceptionOrNull()?.message ?: "Bilinmeyen hata"
+                        break
+                    }
+                    
+                    // Small delay to prevent rate limit
+                    kotlinx.coroutines.delay(250)
+                }
+                
+                if (allKlinesList.isEmpty()) {
+                    if (apiError != null) {
+                        android.widget.Toast.makeText(context, "Veri alınamadı: $apiError", android.widget.Toast.LENGTH_LONG).show()
+                    } else {
+                        android.widget.Toast.makeText(context, "Hiç kline verisi bulunamadı", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                } else {
+                    val combinedResult = com.example.data.remote.model.KlineResult(
+                        symbol = effectiveSymbol,
+                        category = "spot",
+                        list = allKlinesList
+                    )
+                    com.example.ui.components.KlineExporter.shareKlinesAsFile(context, combinedResult, effectiveSymbol, interval, format)
+                }
+            } catch (e: Exception) {
+                android.widget.Toast.makeText(context, "Veri alınırken hata oluştu", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     fun clearLocalExchangeDatabase() {
         viewModelScope.launch(Dispatchers.IO) {
             repository.clearLocalExchangeTrades()

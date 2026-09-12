@@ -87,4 +87,13 @@ interface BybitApiService {
         @Query("limit") limit: Int = 100,
         @Query(value = "cursor", encoded = true) cursor: String? = null
     ): Response<BybitApiResponse<ExecutionListResult>>
+    @GET("/v5/market/kline")
+    suspend fun getKlines(
+        @Query("category") category: String = "spot",
+        @Query("symbol") symbol: String,
+        @Query("interval") interval: String,
+        @Query("start") start: Long? = null,
+        @Query("end") end: Long? = null,
+        @Query("limit") limit: Int = 1000
+    ): Response<BybitApiResponse<com.example.data.remote.model.KlineResult>>
 }
