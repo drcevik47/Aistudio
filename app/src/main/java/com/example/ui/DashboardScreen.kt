@@ -435,6 +435,12 @@ fun DashboardScreen(
                             }
                         }
 
+                        // Realized Profit Dashboard Card
+                        item {
+                            com.example.ui.components.RealizedProfitDashboardCard(
+                                tradeAnalysisState = tradeAnalysisState
+                            )
+                        }
                         // Portfolio Status Card
                         item {
                             PortfolioCard(
