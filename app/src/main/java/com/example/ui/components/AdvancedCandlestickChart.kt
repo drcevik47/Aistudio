@@ -153,7 +153,7 @@ fun AdvancedCandlestickChart(
                         detectTransformGestures { centroid, pan, zoom, _ ->
                             offsetX += pan.x
                             // Allow much further zoom out (0.1f) to see history
-                            val newScaleX = (scaleX * zoom).coerceIn(0.1f, 50f)
+                            val newScaleX = (scaleX * zoom).coerceIn(0.01f, 50f)
                             val diffX = centroid.x - offsetX
                             offsetX -= diffX * (newScaleX / scaleX - 1)
                             scaleX = newScaleX
