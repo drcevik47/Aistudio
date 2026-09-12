@@ -216,6 +216,50 @@ fun SimulationCard(
                                 }
                             }
                         }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Button(
+                            onClick = {
+                                var tempUsdt = simUsdtBalance
+                                var tempMnt = simMntBalance
+                                var tempBasePrice = simBasePrice
+                                var validSteps = 0
+
+                                for (i in 1..100) {
+                                    val plan = RebalanceEngine.calculateGridOrders(tempUsdt, tempMnt, tempBasePrice, stepPercent)
+                                    if (!plan.isValid) break
+
+                                    if (i % 2 != 0) {
+                                        // Odd step: Up (Sell)
+                                        tempUsdt += plan.sellUsdtValue
+                                        tempMnt -= plan.sellMntQty
+                                        tempBasePrice = plan.sellLimitPrice
+                                    } else {
+                                        // Even step: Down (Buy)
+                                        tempUsdt -= plan.buyUsdtValue
+                                        tempMnt += plan.buyMntQty
+                                        tempBasePrice = plan.buyLimitPrice
+                                    }
+                                    validSteps++
+                                }
+
+                                simUsdtBalance = tempUsdt
+                                simMntBalance = tempMnt
+                                simBasePrice = tempBasePrice
+                                simSteps += validSteps
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MinimalPrimary.copy(alpha = 0.1f)),
+                            border = BorderStroke(1.dp, MinimalPrimary.copy(alpha = 0.5f)),
+                            modifier = Modifier.fillMaxWidth(),
+                            contentPadding = PaddingValues(vertical = 12.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.AutoMode, contentDescription = null, tint = MinimalPrimary, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("100 İşlem Simüle Et (Dalgalanma)", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MinimalPrimary)
+                            }
+                        }
                     }
 
                     if (simSteps > 0) {
