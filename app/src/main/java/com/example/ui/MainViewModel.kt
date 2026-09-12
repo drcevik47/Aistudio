@@ -40,8 +40,6 @@ data class TradeAnalysisUiState(
 )
 
 data class MainUiState(
-    val chartKlines: List<com.example.ui.components.KlineData> = emptyList(),
-    val chartInterval: String = "15",
     val isConfigured: Boolean = false,
     val apiKey: String = "",
     val apiSecret: String = "",
@@ -739,49 +737,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     syncResult = null,
                     syncNotice = "Yerel borsa işlem veritabanı temizlendi."
                 )
-            }
-        }
-    }
-
-
-    fun fetchChartData(symbol: String, interval: String) {
-        viewModelScope.launch {
-            _uiState.update { it.copy(chartInterval = interval, chartKlines = emptyList()) } // Clear while loading new interval
-            val allKlines = mutableListOf<com.example.ui.components.KlineData>()
-            var currentEnd: Long? = null
-            var keepFetching = true
-            var pages = 0
-            val maxPages = 5 // Total 5000 candles
-            
-            while (keepFetching && pages < maxPages) {
-                val result = repository.getKlines(symbol = symbol, interval = interval, end = currentEnd, limit = 1000)
-                result.onSuccess { klineResult ->
-                    val klines = klineResult.list.mapNotNull { entry ->
-                        try {
-                            com.example.ui.components.KlineData(
-                                timeMillis = entry[0].toLong(),
-                                open = entry[1].toDouble(),
-                                high = entry[2].toDouble(),
-                                low = entry[3].toDouble(),
-                                close = entry[4].toDouble(),
-                                volume = entry[5].toDouble()
-                            )
-                        } catch (e: Exception) {
-                            null
-                        }
-                    }
-                    if (klines.isEmpty()) {
-                        keepFetching = false
-                    } else {
-                        allKlines.addAll(klines)
-                        currentEnd = klines.minOf { it.timeMillis } - 1
-                        pages++
-                        // Update UI progressively so user sees data loading
-                        _uiState.update { it.copy(chartKlines = allKlines.distinctBy { k -> k.timeMillis }.toList()) }
-                    }
-                }.onFailure {
-                    keepFetching = false
-                }
             }
         }
     }
