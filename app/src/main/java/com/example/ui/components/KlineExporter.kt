@@ -87,6 +87,7 @@ object KlineExporter {
             chooserIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             context.startActivity(chooserIntent)
         } catch (e: Exception) {
+            android.util.Log.e("KlineExporter", "Failed to export klines", e)
             Toast.makeText(context, "Kline dosyası oluşturulamadı: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }

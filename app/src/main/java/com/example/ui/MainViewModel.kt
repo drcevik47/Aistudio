@@ -722,7 +722,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     com.example.ui.components.KlineExporter.shareKlinesAsFile(context, combinedResult, effectiveSymbol, interval, format)
                 }
             } catch (e: Exception) {
-                android.widget.Toast.makeText(context, "Veri alınırken hata oluştu", android.widget.Toast.LENGTH_SHORT).show()
+                android.util.Log.e("KlineExport", "Error exporting klines", e)
+                android.widget.Toast.makeText(context, "Veri alınırken hata oluştu: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
             }
         }
     }

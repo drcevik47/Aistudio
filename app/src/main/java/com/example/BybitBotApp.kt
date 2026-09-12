@@ -27,5 +27,6 @@ class BybitBotApp : Application() {
             logDao = database.logDao(),
             exchangeTradeDao = database.exchangeTradeDao()
         )
+        Thread.setDefaultUncaughtExceptionHandler(com.example.utils.CrashHandler(this, repository))
     }
 }
