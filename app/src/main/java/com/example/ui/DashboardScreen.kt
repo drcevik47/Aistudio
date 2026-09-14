@@ -146,144 +146,148 @@ fun DashboardScreen(
         containerColor = MinimalBg,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-            TopAppBar(
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        var exchangeMenuExpanded by remember { mutableStateOf(false) }
+            Column {
+                TopAppBar(
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            var exchangeMenuExpanded by remember { mutableStateOf(false) }
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(if (state.activeExchange == "OKX") MinimalSecondaryLight else MinimalPrimaryLight)
+                                    .clickable { exchangeMenuExpanded = true },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = if (state.activeExchange == "OKX") "O" else "B",
+                                    fontWeight = FontWeight.Black,
+                                    fontSize = 18.sp,
+                                    color = if (state.activeExchange == "OKX") MinimalSecondary else MinimalPrimary
+                                )
+                                
+                                DropdownMenu(
+                                    expanded = exchangeMenuExpanded,
+                                    onDismissRequest = { exchangeMenuExpanded = false }
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("Bybit Unified") },
+                                        onClick = {
+                                            viewModel.setActiveExchange("BYBIT")
+                                            exchangeMenuExpanded = false
+                                        },
+                                        leadingIcon = { 
+                                            if (state.activeExchange == "BYBIT") Icon(Icons.Default.CheckCircle, null, tint = MinimalPrimary) 
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("OKX TR") },
+                                        onClick = {
+                                            viewModel.setActiveExchange("OKX")
+                                            exchangeMenuExpanded = false
+                                        },
+                                        leadingIcon = { 
+                                            if (state.activeExchange == "OKX") Icon(Icons.Default.CheckCircle, null, tint = MinimalPrimary) 
+                                        }
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text(
+                                    text = "BITBALANCE",
+                                    fontSize = 17.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MinimalTextPrimary,
+                                    letterSpacing = (-0.5).sp
+                                )
+                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
+                                    Surface(
+                                        shape = RoundedCornerShape(999.dp),
+                                        color = if (state.isTestnet) MinimalSecondaryLight else MinimalPrimaryLight
+                                    ) {
+                                        Text(
+                                            text = if (state.isTestnet) "TESTNET" else "UNIFIED SPOT",
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (state.isTestnet) MinimalSecondary else MinimalPrimary,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                    if (state.isBotActive) {
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Box(
+                                            modifier = Modifier
+                                                .size(6.dp)
+                                                .clip(CircleShape)
+                                                .background(MinimalSuccess)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = "BOT ACTIVE",
+                                            fontSize = 9.sp,
+                                            color = MinimalSuccessDark,
+                                            fontWeight = FontWeight.Bold,
+                                            letterSpacing = 0.5.sp
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    actions = {
                         Box(
                             modifier = Modifier
+                                .padding(end = 8.dp)
                                 .size(36.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(if (state.activeExchange == "OKX") MinimalSecondaryLight else MinimalPrimaryLight)
-                                .clickable { exchangeMenuExpanded = true },
+                                .clip(CircleShape)
+                                .background(MinimalSurfaceElevated)
+                                .border(1.dp, MinimalSurfaceBorder, CircleShape)
+                                .clickable(enabled = !state.isLoading) { viewModel.refreshData() }
+                                .testTag("refresh_data_button"),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(
-                                text = if (state.activeExchange == "OKX") "O" else "B",
-                                fontWeight = FontWeight.Black,
-                                fontSize = 18.sp,
-                                color = if (state.activeExchange == "OKX") MinimalSecondary else MinimalPrimary
-                            )
-                            
-                            DropdownMenu(
-                                expanded = exchangeMenuExpanded,
-                                onDismissRequest = { exchangeMenuExpanded = false }
-                            ) {
-                                DropdownMenuItem(
-                                    text = { Text("Bybit Unified") },
-                                    onClick = {
-                                        viewModel.setActiveExchange("BYBIT")
-                                        exchangeMenuExpanded = false
-                                    },
-                                    leadingIcon = { 
-                                        if (state.activeExchange == "BYBIT") Icon(Icons.Default.CheckCircle, null, tint = MinimalPrimary) 
-                                    }
+                            if (state.isLoading) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    color = MinimalPrimary,
+                                    strokeWidth = 2.dp
                                 )
-                                DropdownMenuItem(
-                                    text = { Text("OKX TR") },
-                                    onClick = {
-                                        viewModel.setActiveExchange("OKX")
-                                        exchangeMenuExpanded = false
-                                    },
-                                    leadingIcon = { 
-                                        if (state.activeExchange == "OKX") Icon(Icons.Default.CheckCircle, null, tint = MinimalPrimary) 
-                                    }
+                            } else {
+                                Icon(
+                                    Icons.Default.Refresh,
+                                    contentDescription = "Yenile",
+                                    tint = MinimalTextSecondary,
+                                    modifier = Modifier.size(18.dp)
                                 )
                             }
                         }
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column {
-                            Text(
-                                text = "BITBALANCE",
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MinimalTextPrimary,
-                                letterSpacing = (-0.3).sp
-                            )
-                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 1.dp)) {
-                                Surface(
-                                    shape = RoundedCornerShape(999.dp),
-                                    color = if (state.isTestnet) MinimalSecondaryLight else MinimalPrimaryLight
-                                ) {
-                                    Text(
-                                        text = if (state.isTestnet) "TESTNET" else "UNIFIED SPOT",
-                                        fontSize = 9.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (state.isTestnet) MinimalSecondary else MinimalPrimary,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                    )
-                                }
-                                if (state.isBotActive) {
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Box(
-                                        modifier = Modifier
-                                            .size(7.dp)
-                                            .clip(CircleShape)
-                                            .background(MinimalSuccess)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        text = "BOT ACTIVE • 24/7",
-                                        fontSize = 9.sp,
-                                        color = MinimalSuccessDark,
-                                        fontWeight = FontWeight.Bold,
-                                        letterSpacing = 0.5.sp
-                                    )
-                                }
-                            }
-                        }
-                    }
-                },
-                actions = {
-                    IconButton(
-                        onClick = { viewModel.refreshData() },
-                        enabled = !state.isLoading,
-                        modifier = Modifier
-                            .padding(end = 4.dp)
-                            .size(38.dp)
-                            .clip(CircleShape)
-                            .background(MinimalSurfaceElevated)
-                            .border(1.dp, MinimalSurfaceBorder, CircleShape)
-                            .testTag("refresh_data_button")
-                    ) {
-                        if (state.isLoading) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(16.dp),
-                                color = MinimalPrimary,
-                                strokeWidth = 2.dp
-                            )
-                        } else {
+                        Box(
+                            modifier = Modifier
+                                .padding(end = 12.dp)
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(MinimalSurfaceElevated)
+                                .border(1.dp, MinimalSurfaceBorder, CircleShape)
+                                .clickable { showSettingsDialog = true }
+                                .testTag("open_settings_button"),
+                            contentAlignment = Alignment.Center
+                        ) {
                             Icon(
-                                Icons.Default.Refresh,
-                                contentDescription = "Yenile",
+                                Icons.Default.Settings,
+                                contentDescription = "Ayarlar",
                                 tint = MinimalTextSecondary,
                                 modifier = Modifier.size(18.dp)
                             )
                         }
-                    }
-                    IconButton(
-                        onClick = { showSettingsDialog = true },
-                        modifier = Modifier
-                            .padding(end = 12.dp)
-                            .size(38.dp)
-                            .clip(CircleShape)
-                            .background(MinimalSurfaceElevated)
-                            .border(1.dp, MinimalSurfaceBorder, CircleShape)
-                            .testTag("open_settings_button")
-                    ) {
-                        Icon(
-                            Icons.Default.Settings,
-                            contentDescription = "Ayarlar",
-                            tint = MinimalTextSecondary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MinimalSurface,
-                    titleContentColor = MinimalTextPrimary
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MinimalSurface,
+                        titleContentColor = MinimalTextPrimary
+                    )
                 )
-            )
+                androidx.compose.material3.HorizontalDivider(color = MinimalSurfaceBorderLight)
+            }
         },
         bottomBar = {
             NavigationBar(

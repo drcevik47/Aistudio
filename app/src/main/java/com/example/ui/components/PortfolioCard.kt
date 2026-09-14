@@ -406,16 +406,22 @@ fun PortfolioCard(
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(text = entry.key, fontWeight = FontWeight.Bold, color = MinimalTextPrimary)
+                                    Column {
+                                        Text(text = entry.key, fontWeight = FontWeight.Bold, color = MinimalTextPrimary)
+                                        if (entry.value.fiatValue > 0.0) {
+                                            val currentPrice = entry.value.fiatValue / entry.value.quantity
+                                            Text(text = "Fiyat: $${RebalanceEngine.format4(currentPrice)}", fontSize = 11.sp, color = MinimalTextSecondary)
+                                        }
+                                    }
                                     Column(horizontalAlignment = Alignment.End) {
                                         Text(text = RebalanceEngine.format4(entry.value.quantity), color = MinimalTextPrimary, fontSize = 14.sp)
                                         if (entry.value.fiatValue > 0.0) {
-                                            Text(text = "$${RebalanceEngine.format2(entry.value.fiatValue)}", color = MinimalTextSecondary, fontSize = 12.sp)
+                                            Text(text = "$${RebalanceEngine.format2(entry.value.fiatValue)}", color = MinimalSuccessDark, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                                         }
                                     }
                                 }
-                                androidx.compose.material3.HorizontalDivider(color = MinimalSurfaceBorderLight)
                             }
+                            androidx.compose.material3.HorizontalDivider(color = MinimalSurfaceBorderLight)
                         }
                     }
                 }
