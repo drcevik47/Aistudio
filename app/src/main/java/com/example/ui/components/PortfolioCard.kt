@@ -21,15 +21,25 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.TrendingDown
 import androidx.compose.material.icons.filled.TrendingUp
+import androidx.compose.material.icons.filled.AccountBalanceWallet
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -66,10 +76,13 @@ fun PortfolioCard(
     currentPrice: Double,
     price24hChange: Double,
     isBotActive: Boolean,
+    walletBalances: Map<String, Double> = emptyMap(),
     onManualRebalanceClick: () -> Unit,
     modifier: Modifier = Modifier,
     exchangeName: String = "Bybit Unified"
 ) {
+    var showWalletDialog by remember { mutableStateOf(false) }
+
     Card(
         modifier = modifier
             .fillMaxWidth()
@@ -107,17 +120,32 @@ fun PortfolioCard(
                     )
                 }
 
-                Surface(
-                    shape = RoundedCornerShape(999.dp),
-                    color = MinimalPrimaryLight
-                ) {
-                    Text(
-                        text = exchangeName,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MinimalPrimaryDark,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        shape = RoundedCornerShape(999.dp),
+                        color = MinimalPrimaryLight
+                    ) {
+                        Text(
+                            text = exchangeName,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MinimalPrimaryDark,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Surface(
+                        shape = CircleShape,
+                        color = MinimalSurfaceElevated,
+                        onClick = { showWalletDialog = true }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AccountBalanceWallet,
+                            contentDescription = "Cüzdan Bakiyeleri",
+                            tint = MinimalPrimary,
+                            modifier = Modifier.padding(6.dp).size(16.dp)
+                        )
+                    }
                 }
             }
 
@@ -352,6 +380,49 @@ fun PortfolioCard(
                 }
             }
         }
+    }
+
+    if (showWalletDialog) {
+        AlertDialog(
+            onDismissRequest = { showWalletDialog = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(imageVector = Icons.Default.AccountBalanceWallet, contentDescription = null, tint = MinimalPrimary)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(text = "Cüzdan Bakiyeleri ($exchangeName)", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MinimalTextPrimary)
+                }
+            },
+            text = {
+                if (walletBalances.isEmpty()) {
+                    Text(text = "Bakiye bulunamadı veya henüz çekilmedi.", color = MinimalTextSecondary)
+                } else {
+                    LazyColumn {
+                        items(walletBalances.entries.sortedByDescending { it.value }.toList()) { entry ->
+                            if (entry.value > 0.0) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 8.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(text = entry.key, fontWeight = FontWeight.Bold, color = MinimalTextPrimary)
+                                    Text(text = RebalanceEngine.format4(entry.value), color = MinimalTextSecondary)
+                                }
+                                androidx.compose.material3.HorizontalDivider(color = MinimalSurfaceBorderLight)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showWalletDialog = false }) {
+                    Text("Kapat")
+                }
+            },
+            containerColor = MinimalSurface,
+            titleContentColor = MinimalTextPrimary
+        )
     }
 }
 

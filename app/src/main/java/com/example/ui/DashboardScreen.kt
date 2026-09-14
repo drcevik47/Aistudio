@@ -477,6 +477,7 @@ fun DashboardScreen(
                                     currentPrice = state.currentPrice,
                                     price24hChange = state.price24hChange,
                                     isBotActive = state.isBotActive,
+                                    walletBalances = state.walletBalances,
                                     onManualRebalanceClick = {
                                         viewModel.requestInitialRebalanceDialog()
                                     },
@@ -494,6 +495,7 @@ fun DashboardScreen(
                                     currentPrice = state.okxCurrentPrice,
                                     price24hChange = state.okxPrice24hChange, // Or Okx specific if added
                                     isBotActive = false, // Always allow manual rebalance for OKX
+                                    walletBalances = state.okxWalletBalances,
                                     onManualRebalanceClick = {
                                         viewModel.executeOkxRebalance()
                                     },

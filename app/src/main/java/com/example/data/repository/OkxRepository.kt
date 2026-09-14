@@ -82,13 +82,12 @@ class OkxRepository(
                 val api = createApiService()
                 val map = mutableMapOf<String, Double>()
                 
-                val ccyParam = "${preferences.okxBaseCoin},USDT"
                 var fetchSuccess = false
                 var errorMsg = ""
                 
                 // 1. Try account/balance (Trading / Unified account)
                 try {
-                    val tradeRes = api.getBalance(ccyParam)
+                    val tradeRes = api.getBalance(null)
                     if (tradeRes.code == "0" && tradeRes.data.isNotEmpty()) {
                         tradeRes.data.first().details.forEach { detail ->
                             val avail = detail.availEq.toDoubleOrNull() ?: detail.availBal.toDoubleOrNull() ?: 0.0
@@ -106,7 +105,7 @@ class OkxRepository(
                 // 2. Try asset/balances (Funding account)
                 if (!fetchSuccess || map.values.all { it == 0.0 }) {
                     try {
-                        val fundRes = api.getAssetBalances(ccyParam)
+                        val fundRes = api.getAssetBalances(null)
                         if (fundRes.code == "0" && fundRes.data.isNotEmpty()) {
                             fundRes.data.forEach { asset ->
                                 val avail = asset.availBal.toDoubleOrNull() ?: 0.0

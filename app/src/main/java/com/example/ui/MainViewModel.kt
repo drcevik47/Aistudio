@@ -56,12 +56,14 @@ data class MainUiState(
     val price24hChange: Double = 0.0,
     val usdtBalance: Double = 0.0,
     val baseCoinBalance: Double = 0.0,
+    val walletBalances: Map<String, Double> = emptyMap(),
     val portfolioAnalysis: PortfolioAnalysis? = null,
     val gridPlan: GridOrdersPlan? = null,
     val okxCurrentPrice: Double = 0.0,
     val okxPrice24hChange: Double = 0.0,
     val okxUsdtBalance: Double = 0.0,
     val okxBaseCoinBalance: Double = 0.0,
+    val okxWalletBalances: Map<String, Double> = emptyMap(),
     val okxPortfolioAnalysis: PortfolioAnalysis? = null,
     val okxGridPlan: GridOrdersPlan? = null,
     val okxActiveOrders: List<com.example.data.remote.okx.model.OkxOrderDetails> = emptyList(),
@@ -213,10 +215,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             var usdt = _uiState.value.usdtBalance
             var baseQty = _uiState.value.baseCoinBalance
+            var allBalances = _uiState.value.walletBalances
 
             if (cycleCount % 2 == 0 || usdt <= 0.0) {
                 val balanceRes = repository.getWalletBalance()
                 balanceRes.onSuccess { map ->
+                    allBalances = map
                     usdt = map["USDT"] ?: 0.0
                     baseQty = map[_uiState.value.activeBaseCoin] ?: 0.0
                 }
@@ -259,6 +263,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     price24hChange = priceChange,
                     usdtBalance = usdt,
                     baseCoinBalance = baseQty,
+                    walletBalances = allBalances,
                     activeOrders = openOrders,
                     portfolioAnalysis = analysis,
                     gridPlan = gridPlan,
@@ -467,6 +472,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         var okxCurrentPrice = _uiState.value.okxCurrentPrice
         var okxUsdt = _uiState.value.okxUsdtBalance
         var okxBaseQty = _uiState.value.okxBaseCoinBalance
+        var okxAllBalances = _uiState.value.okxWalletBalances
         var okxAnalysis = _uiState.value.okxPortfolioAnalysis
 
         if (cycleCount % 2 == 0 || okxCurrentPrice <= 0.0) {
@@ -479,6 +485,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (cycleCount % 2 == 0 || okxUsdt <= 0.0) {
             val okxBalanceRes = okxRepository.getWalletBalance()
             okxBalanceRes.onSuccess { map ->
+                okxAllBalances = map
                 okxUsdt = map["USDT"] ?: 0.0
                 okxBaseQty = map[preferences.okxBaseCoin] ?: 0.0
             }
@@ -519,6 +526,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 okxCurrentPrice = okxCurrentPrice,
                 okxUsdtBalance = okxUsdt,
                 okxBaseCoinBalance = okxBaseQty,
+                okxWalletBalances = okxAllBalances,
                 okxPortfolioAnalysis = okxAnalysis,
                 okxActiveOrders = okxOrders,
                 okxGridPlan = okxPlan,
