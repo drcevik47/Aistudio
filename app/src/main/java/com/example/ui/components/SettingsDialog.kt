@@ -154,91 +154,23 @@ fun SettingsDialog(
 
                 Spacer(modifier = Modifier.height(18.dp))
 
-                // Step Percent Card
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MinimalSurfaceElevated),
-                    shape = RoundedCornerShape(16.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, MinimalSurfaceBorderLight)
-                ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.Percent, contentDescription = null, tint = MinimalPrimary, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "Rebalance Grid Step",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 13.sp,
-                                    color = MinimalTextPrimary
-                                )
-                            }
-                            Surface(
-                                shape = RoundedCornerShape(999.dp),
-                                color = MinimalPrimaryLight
-                            ) {
-                                Text(
-                                    text = "±${RebalanceEngine.format2(stepSlider.toDouble())}%",
-                                    fontWeight = FontWeight.Bold,
-                                    color = MinimalPrimaryDark,
-                                    fontSize = 12.sp,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                )
-                            }
-                        }
+                // Bybit Step Percent Card
+                StepPercentCard(
+                    title = "Bybit Grid Step",
+                    sliderValue = stepSlider,
+                    onValueChange = { stepSlider = it },
+                    tag = "bybit_step_percent_slider"
+                )
 
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "Default: 2.00% (Orders placed at +2% sell and -2% buy to maintain 50/50 balance)",
-                            fontSize = 11.sp,
-                            color = MinimalTextSecondary
-                        )
+                Spacer(modifier = Modifier.height(18.dp))
 
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        Slider(
-                            value = stepSlider,
-                            onValueChange = { stepSlider = it },
-                            valueRange = 0.5f..10.0f,
-                            steps = 18,
-                            colors = SliderDefaults.colors(
-                                thumbColor = MinimalPrimary,
-                                activeTrackColor = MinimalPrimary,
-                                inactiveTrackColor = MinimalSurfaceBorder
-                            ),
-                            modifier = Modifier.testTag("step_percent_slider")
-                        )
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            listOf(1.0f, 1.5f, 2.0f, 3.0f, 5.0f).forEach { preset ->
-                                FilterChip(
-                                    selected = kotlin.math.abs(stepSlider - preset) < 0.05f,
-                                    onClick = { stepSlider = preset },
-                                    shape = RoundedCornerShape(999.dp),
-                                    label = { Text("${preset.toInt()}%", fontSize = 11.sp) },
-                                    colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = MinimalPrimary,
-                                        selectedLabelColor = Color.White,
-                                        containerColor = MinimalSurface,
-                                        labelColor = MinimalTextSecondary
-                                    ),
-                                    border = FilterChipDefaults.filterChipBorder(
-                                        enabled = true,
-                                        selected = kotlin.math.abs(stepSlider - preset) < 0.05f,
-                                        borderColor = MinimalSurfaceBorder,
-                                        selectedBorderColor = MinimalPrimary
-                                    )
-                                )
-                            }
-                        }
-                    }
-                }
+                // OKX TR Step Percent Card
+                StepPercentCard(
+                    title = "OKX TR Grid Step",
+                    sliderValue = okxStepSlider,
+                    onValueChange = { okxStepSlider = it },
+                    tag = "okx_step_percent_slider"
+                )
 
                 Spacer(modifier = Modifier.height(12.dp))
 
