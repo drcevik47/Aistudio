@@ -204,8 +204,8 @@ class TradingBotService : Service() {
                         if (cycleCount % 3 == 0 || lastUsdtBalance <= 0.0) {
                             val balanceRes = repository.getWalletBalance()
                             balanceRes.onSuccess { balances ->
-                                lastUsdtBalance = balances["USDT"] ?: 0.0
-                                lastBaseBalance = balances["${preferences.bybitBaseCoin}"] ?: 0.0
+                                lastUsdtBalance = balances["USDT"]?.quantity ?: 0.0
+                                lastBaseBalance = balances["${preferences.bybitBaseCoin}"]?.quantity ?: 0.0
                                 updateNotification()
                             }
                         }

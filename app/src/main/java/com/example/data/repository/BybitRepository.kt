@@ -35,6 +35,7 @@ import org.json.JSONObject
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 import java.util.Locale
+import com.example.ui.AssetBalance
 import java.util.concurrent.TimeUnit
 import kotlin.math.floor
 
@@ -236,7 +237,7 @@ class BybitRepository(
         apiKey: String = preferences.apiKey,
         apiSecret: String = preferences.apiSecret,
         isTestnet: Boolean = preferences.isTestnet
-    ): Result<Map<String, Double>> = withContext(Dispatchers.IO) {
+    ): Result<Map<String, AssetBalance>> = withContext(Dispatchers.IO) {
         try {
             if (apiKey.isBlank() || apiSecret.isBlank()) {
                 return@withContext Result.failure(Exception("API Key veya Secret eksik"))
@@ -250,9 +251,12 @@ class BybitRepository(
             if (response.isSuccessful) {
                 val body = response.body()
                 if (body != null && body.isSuccess) {
-                    val balanceMap = mutableMapOf<String, Double>()
+                    val balanceMap = mutableMapOf<String, AssetBalance>()
                     body.result?.list?.firstOrNull()?.coin?.forEach { coin ->
-                        balanceMap[coin.coin.uppercase()] = coin.balanceValue
+                        balanceMap[coin.coin.uppercase()] = AssetBalance(
+                            quantity = coin.balanceValue,
+                            fiatValue = coin.fiatValue
+                        )
                     }
                     Result.success(balanceMap)
                 } else {
@@ -801,8 +805,8 @@ class BybitRepository(
                 var mnt = 0.0
                 val balanceRes = getWalletBalance()
                 balanceRes.onSuccess { map ->
-                    usdt = map["USDT"] ?: 0.0
-                    mnt = map["${preferences.bybitBaseCoin}"] ?: 0.0
+                    usdt = map["USDT"]?.quantity ?: 0.0
+                    mnt = map["${preferences.bybitBaseCoin}"]?.quantity ?: 0.0
                 }
 
                 if (usdt > 0.0 && mnt > 0.0 && finalExecPrice > 0.0) {
@@ -935,8 +939,8 @@ class BybitRepository(
                 var usdt = 0.0
                 var mnt = 0.0
                 getWalletBalance().onSuccess { map ->
-                    usdt = map["USDT"] ?: 0.0
-                    mnt = map["${preferences.bybitBaseCoin}"] ?: 0.0
+                    usdt = map["USDT"]?.quantity ?: 0.0
+                    mnt = map["${preferences.bybitBaseCoin}"]?.quantity ?: 0.0
                 }
 
                 if (usdt > 0.0 && mnt > 0.0) {
@@ -1069,8 +1073,8 @@ class BybitRepository(
                     var usdt = 0.0
                     var mnt = 0.0
                     getWalletBalance().onSuccess { map ->
-                        usdt = map["USDT"] ?: 0.0
-                        mnt = map["${preferences.bybitBaseCoin}"] ?: 0.0
+                        usdt = map["USDT"]?.quantity ?: 0.0
+                        mnt = map["${preferences.bybitBaseCoin}"]?.quantity ?: 0.0
                     }
 
                     if (usdt <= 0.0 && mnt <= 0.0) {

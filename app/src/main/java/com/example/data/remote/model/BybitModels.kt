@@ -33,10 +33,12 @@ data class CoinBalance(
     @Json(name = "walletBalance") val walletBalance: String = "0",
     @Json(name = "availableToWithdraw") val availableToWithdraw: String = "0",
     @Json(name = "availableToBorrow") val availableToBorrow: String = "0",
-    @Json(name = "totalOrderIM") val totalOrderIM: String = "0"
+    @Json(name = "totalOrderIM") val totalOrderIM: String = "0",
+    @Json(name = "usdValue") val usdValue: String? = null
 ) {
     val balanceValue: Double get() = walletBalance.toDoubleOrNull() ?: equity.toDoubleOrNull() ?: 0.0
     val availableValue: Double get() = availableToWithdraw.toDoubleOrNull() ?: balanceValue
+    val fiatValue: Double get() = usdValue?.toDoubleOrNull() ?: 0.0
 }
 
 @JsonClass(generateAdapter = true)

@@ -29,7 +29,8 @@ data class OkxBalanceDetail(
     @Json(name = "ccy") val ccy: String = "",
     @Json(name = "availEq") val availEq: String = "0",
     @Json(name = "cashBal") val cashBal: String = "0",
-    @Json(name = "availBal") val availBal: String = "0"
+    @Json(name = "availBal") val availBal: String = "0",
+    @Json(name = "eqUsd") val eqUsd: String? = null
 )
 
 @JsonClass(generateAdapter = true)

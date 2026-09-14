@@ -39,6 +39,8 @@ data class TradeAnalysisUiState(
     val syncNotice: String? = null
 )
 
+data class AssetBalance(val quantity: Double, val fiatValue: Double)
+
 data class MainUiState(
     val isConfigured: Boolean = false,
     val apiKey: String = "",
@@ -56,14 +58,14 @@ data class MainUiState(
     val price24hChange: Double = 0.0,
     val usdtBalance: Double = 0.0,
     val baseCoinBalance: Double = 0.0,
-    val walletBalances: Map<String, Double> = emptyMap(),
+    val walletBalances: Map<String, AssetBalance> = emptyMap(),
     val portfolioAnalysis: PortfolioAnalysis? = null,
     val gridPlan: GridOrdersPlan? = null,
     val okxCurrentPrice: Double = 0.0,
     val okxPrice24hChange: Double = 0.0,
     val okxUsdtBalance: Double = 0.0,
     val okxBaseCoinBalance: Double = 0.0,
-    val okxWalletBalances: Map<String, Double> = emptyMap(),
+    val okxWalletBalances: Map<String, AssetBalance> = emptyMap(),
     val okxPortfolioAnalysis: PortfolioAnalysis? = null,
     val okxGridPlan: GridOrdersPlan? = null,
     val okxActiveOrders: List<com.example.data.remote.okx.model.OkxOrderDetails> = emptyList(),
@@ -221,8 +223,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val balanceRes = repository.getWalletBalance()
                 balanceRes.onSuccess { map ->
                     allBalances = map
-                    usdt = map["USDT"] ?: 0.0
-                    baseQty = map[_uiState.value.activeBaseCoin] ?: 0.0
+                    usdt = map["USDT"]?.quantity ?: 0.0
+                    baseQty = map[_uiState.value.activeBaseCoin]?.quantity ?: 0.0
                 }
             }
 
@@ -409,8 +411,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             var baseQty = _uiState.value.baseCoinBalance
             val balanceRes = repository.getWalletBalance()
             balanceRes.onSuccess { map ->
-                usdt = map["USDT"] ?: 0.0
-                baseQty = map[_uiState.value.activeBaseCoin] ?: 0.0
+                usdt = map["USDT"]?.quantity ?: 0.0
+                baseQty = map[_uiState.value.activeBaseCoin]?.quantity ?: 0.0
             }.onFailure { err ->
                 _uiState.update { it.copy(errorMessage = "Bakiye çekilemedi: ${err.message}", isLoading = false) }
                 return@launch
@@ -486,8 +488,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val okxBalanceRes = okxRepository.getWalletBalance()
             okxBalanceRes.onSuccess { map ->
                 okxAllBalances = map
-                okxUsdt = map["USDT"] ?: 0.0
-                okxBaseQty = map[preferences.okxBaseCoin] ?: 0.0
+                okxUsdt = map["USDT"]?.quantity ?: 0.0
+                okxBaseQty = map[preferences.okxBaseCoin]?.quantity ?: 0.0
             }
         }
 

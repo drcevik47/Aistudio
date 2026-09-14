@@ -22,6 +22,7 @@ import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 import java.util.concurrent.TimeUnit
 
+import com.example.ui.AssetBalance
 class OkxRepository(
     private val preferences: BotPreferences,
     private val database: AppDatabase
@@ -76,11 +77,11 @@ class OkxRepository(
         }
     }
 
-    suspend fun getWalletBalance(): Result<Map<String, Double>> {
+    suspend fun getWalletBalance(): Result<Map<String, AssetBalance>> {
         return withContext(Dispatchers.IO) {
             try {
                 val api = createApiService()
-                val map = mutableMapOf<String, Double>()
+                val map = mutableMapOf<String, AssetBalance>()
                 
                 var fetchSuccess = false
                 var errorMsg = ""
@@ -91,7 +92,11 @@ class OkxRepository(
                     if (tradeRes.code == "0" && tradeRes.data.isNotEmpty()) {
                         tradeRes.data.first().details.forEach { detail ->
                             val avail = detail.availEq.toDoubleOrNull() ?: detail.availBal.toDoubleOrNull() ?: 0.0
-                            map[detail.ccy] = (map[detail.ccy] ?: 0.0) + avail
+                            val usdEq = detail.eqUsd?.toDoubleOrNull() ?: 0.0
+                            val current = map[detail.ccy]
+                            val newAvail = (current?.quantity ?: 0.0) + avail
+                            val newUsdEq = (current?.fiatValue ?: 0.0) + usdEq
+                            map[detail.ccy] = AssetBalance(newAvail, newUsdEq)
                         }
                         fetchSuccess = true
                         // Removed spammy log
@@ -103,13 +108,16 @@ class OkxRepository(
                 }
 
                 // 2. Try asset/balances (Funding account)
-                if (!fetchSuccess || map.values.all { it == 0.0 }) {
+                if (!fetchSuccess || map.values.all { it.quantity == 0.0 }) {
                     try {
                         val fundRes = api.getAssetBalances(null)
                         if (fundRes.code == "0" && fundRes.data.isNotEmpty()) {
                             fundRes.data.forEach { asset ->
                                 val avail = asset.availBal.toDoubleOrNull() ?: 0.0
-                                map[asset.ccy] = (map[asset.ccy] ?: 0.0) + avail
+                                val current = map[asset.ccy]
+                                val newAvail = (current?.quantity ?: 0.0) + avail
+                                // Asset balances don't typically have eqUsd, so we just carry over or use 0
+                                map[asset.ccy] = AssetBalance(newAvail, current?.fiatValue ?: 0.0)
                             }
                             fetchSuccess = true
                             // Removed spammy log
@@ -223,8 +231,8 @@ class OkxRepository(
             val balanceRes = getWalletBalance()
             if (balanceRes.isFailure) return@withContext Result.failure(Exception("OKX Bakiye alınamadı"))
             val balances = balanceRes.getOrNull() ?: emptyMap()
-            val usdtBalance = balances["USDT"] ?: 0.0
-            val baseCoinBalance = balances[preferences.okxBaseCoin] ?: 0.0
+            val usdtBalance = balances["USDT"]?.quantity ?: 0.0
+            val baseCoinBalance = balances[preferences.okxBaseCoin]?.quantity ?: 0.0
 
             val basePrice = if (preferences.okxLastRebalancePrice > 0.0) preferences.okxLastRebalancePrice else currentPrice
 

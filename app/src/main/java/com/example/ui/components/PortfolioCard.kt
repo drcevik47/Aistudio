@@ -76,7 +76,7 @@ fun PortfolioCard(
     currentPrice: Double,
     price24hChange: Double,
     isBotActive: Boolean,
-    walletBalances: Map<String, Double> = emptyMap(),
+    walletBalances: Map<String, com.example.ui.AssetBalance> = emptyMap(),
     onManualRebalanceClick: () -> Unit,
     modifier: Modifier = Modifier,
     exchangeName: String = "Bybit Unified"
@@ -212,8 +212,8 @@ fun PortfolioCard(
             val usdtPct = analysis?.usdtPercent?.toFloat() ?: 50f
             val basePct = analysis?.basePercent?.toFloat() ?: 50f
 
-            val animatedUsdtPct by animateFloatAsState(targetValue = usdtPct.coerceIn(0f, 100f), label = "usdt_bar")
-            val animatedBasePct by animateFloatAsState(targetValue = basePct.coerceIn(0f, 100f), label = "mnt_bar")
+            val animatedUsdtPct by animateFloatAsState(targetValue = usdtPct.coerceIn(0f, 100f), animationSpec = androidx.compose.animation.core.tween(300), label = "usdt_bar")
+            val animatedBasePct by animateFloatAsState(targetValue = basePct.coerceIn(0f, 100f), animationSpec = androidx.compose.animation.core.tween(300), label = "mnt_bar")
 
             // USDT Progress Item
             Column(modifier = Modifier.fillMaxWidth()) {
@@ -397,8 +397,8 @@ fun PortfolioCard(
                     Text(text = "Bakiye bulunamadı veya henüz çekilmedi.", color = MinimalTextSecondary)
                 } else {
                     LazyColumn {
-                        items(walletBalances.entries.sortedByDescending { it.value }.toList()) { entry ->
-                            if (entry.value > 0.0) {
+                        items(walletBalances.entries.sortedByDescending { it.value.fiatValue }.toList()) { entry ->
+                            if (entry.value.quantity > 0.0) {
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -407,7 +407,12 @@ fun PortfolioCard(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(text = entry.key, fontWeight = FontWeight.Bold, color = MinimalTextPrimary)
-                                    Text(text = RebalanceEngine.format4(entry.value), color = MinimalTextSecondary)
+                                    Column(horizontalAlignment = Alignment.End) {
+                                        Text(text = RebalanceEngine.format4(entry.value.quantity), color = MinimalTextPrimary, fontSize = 14.sp)
+                                        if (entry.value.fiatValue > 0.0) {
+                                            Text(text = "$${RebalanceEngine.format2(entry.value.fiatValue)}", color = MinimalTextSecondary, fontSize = 12.sp)
+                                        }
+                                    }
                                 }
                                 androidx.compose.material3.HorizontalDivider(color = MinimalSurfaceBorderLight)
                             }

@@ -470,7 +470,7 @@ fun DashboardScreen(
 
                         // Portfolio Status Card
                         if (state.activeExchange == "BYBIT") {
-                            item {
+                            item(key = "portfolio_bybit") {
                                 PortfolioCard(
                                     analysis = state.portfolioAnalysis,
                                     activeBaseCoin = viewModel.preferences.bybitBaseCoin,
@@ -487,7 +487,7 @@ fun DashboardScreen(
                         }
 
                         if (state.activeExchange == "OKX" && viewModel.preferences.okxApiKey.isNotBlank()) {
-                            item {
+                            item(key = "portfolio_okx") {
                                 Spacer(modifier = Modifier.height(16.dp))
                                 PortfolioCard(
                                     analysis = state.okxPortfolioAnalysis,
@@ -502,7 +502,6 @@ fun DashboardScreen(
                                     exchangeName = "OKX TR"
                                 )
                             }
-                            
                             // OKX Grid Limit Orders Card
                             item {
                                 ActiveOrdersCard(
