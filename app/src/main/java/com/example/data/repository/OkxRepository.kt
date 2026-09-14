@@ -133,6 +133,47 @@ class OkxRepository(
         }
     }
 
+    suspend fun createOrder(
+        side: String,
+        orderType: String, // "market" or "limit"
+        qty: Double,
+        price: Double? = null,
+        clOrdId: String? = null
+    ): Result<String> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val api = createApiService()
+                val request = com.example.data.remote.okx.model.OkxOrderRequest(
+                    instId = preferences.okxSymbol,
+                    tdMode = "cash",
+                    side = side.lowercase(),
+                    ordType = orderType.lowercase(),
+                    sz = String.format(java.util.Locale.US, "%.8f", qty).trimEnd('0').trimEnd('.'),
+                    px = price?.let { String.format(java.util.Locale.US, "%.4f", it).trimEnd('0').trimEnd('.') },
+                    tgtCcy = "base_ccy", // Force quantity to mean base coin (e.g. BTC)
+                    clOrdId = clOrdId
+                )
+                val response = api.placeOrder(request)
+                if (response.code == "0" && response.data.isNotEmpty()) {
+                    val resData = response.data.first()
+                    if (resData.sCode == "0") {
+                        log(LogLevel.INFO, "OKX_ORDER", "Emir iletildi (${side} $qty). OrderId: ${resData.ordId}")
+                        Result.success(resData.ordId)
+                    } else {
+                        log(LogLevel.ERROR, "OKX_ORDER", "Emir Hatası: ${resData.sCode} - ${resData.sMsg}")
+                        Result.failure(Exception("${resData.sCode} - ${resData.sMsg}"))
+                    }
+                } else {
+                    log(LogLevel.ERROR, "OKX_ORDER", "API Hatası: ${response.code} - ${response.msg}")
+                    Result.failure(Exception("${response.code} - ${response.msg}"))
+                }
+            } catch (e: Exception) {
+                log(LogLevel.ERROR, "OKX_ORDER", "Ağ Hatası: ${e.message}")
+                Result.failure(e)
+            }
+        }
+    }
+
     suspend fun log(level: LogLevel, tag: String, message: String, details: String = "") {
         withContext(Dispatchers.IO) {
             database.logDao().insertLog(

@@ -308,6 +308,48 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         recalculateGridPlan()
     }
 
+    fun executeOkxRebalance() {
+        val analysis = _uiState.value.okxPortfolioAnalysis ?: return
+        val currentPrice = _uiState.value.okxCurrentPrice
+        if (currentPrice <= 0.0) return
+
+        viewModelScope.launch(Dispatchers.IO) {
+            _uiState.update { it.copy(isLoading = true, isExecutingRebalance = true) }
+
+            val side = if (analysis.requiredAction == RebalanceAction.BUY_BASE) "Buy" else "Sell"
+            val qty = analysis.deltaBase
+
+            val res = okxRepository.createOrder(
+                side = side,
+                orderType = "Market",
+                qty = qty,
+                price = null
+            )
+
+            res.fold(
+                onSuccess = { orderId ->
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            isExecutingRebalance = false,
+                            statusMessage = "OKX Dengeleme ($side ${RebalanceEngine.formatCryptoQty(qty)}) başarıyla iletildi."
+                        )
+                    }
+                    fetchOkxData(0) // Refresh balances
+                },
+                onFailure = { err ->
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            isExecutingRebalance = false,
+                            errorMessage = "OKX Dengeleme başarısız: ${err.message}"
+                        )
+                    }
+                }
+            )
+        }
+    }
+
     fun dismissError() {
         _uiState.update { it.copy(errorMessage = null) }
     }

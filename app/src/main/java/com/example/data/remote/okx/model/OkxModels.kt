@@ -40,6 +40,7 @@ data class OkxOrderRequest(
     @Json(name = "ordType") val ordType: String = "limit",
     @Json(name = "sz") val sz: String,
     @Json(name = "px") val px: String? = null,
+    @Json(name = "tgtCcy") val tgtCcy: String? = null,
     @Json(name = "clOrdId") val clOrdId: String? = null
 )
 

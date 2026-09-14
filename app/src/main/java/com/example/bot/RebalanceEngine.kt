@@ -114,10 +114,10 @@ object RebalanceEngine {
                 RebalanceAction.BALANCED to "Portföy dengeli (%${format2(usdtPercent)} USDT / %${format2(basePercent)} BASE)"
             }
             rawDeltaBase > 0 -> {
-                RebalanceAction.BUY_BASE to "USDT fazlalığı var. %50 eşitlemek için ${format2(deltaBaseAbs)} BASE alınmalı (~${format2(deltaUsdt)} USDT harcanacak)"
+                RebalanceAction.BUY_BASE to "USDT fazlalığı var. %50 eşitlemek için ${formatCryptoQty(deltaBaseAbs)} BASE alınmalı (~${format2(deltaUsdt)} USDT harcanacak)"
             }
             else -> {
-                RebalanceAction.SELL_BASE to "BASE fazlalığı var. %50 eşitlemek için ${format2(deltaBaseAbs)} BASE satılmalı (~${format2(deltaUsdt)} USDT alınacak)"
+                RebalanceAction.SELL_BASE to "BASE fazlalığı var. %50 eşitlemek için ${formatCryptoQty(deltaBaseAbs)} BASE satılmalı (~${format2(deltaUsdt)} USDT alınacak)"
             }
         }
 
