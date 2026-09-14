@@ -75,6 +75,8 @@ class TradingBotService : Service() {
         val action = intent?.action
         when (action) {
             ACTION_STOP_BOT -> {
+                preferences.isBotActive = false
+                preferences.isOkxBotActive = false
                 stopBot()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
