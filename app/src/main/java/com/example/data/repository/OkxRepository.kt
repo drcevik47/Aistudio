@@ -29,9 +29,9 @@ class OkxRepository(
         .build()
 
     private fun createApiService(): OkxApiService {
-        val apiKey = preferences.okxApiKey
-        val apiSecret = preferences.okxApiSecret
-        val passphrase = preferences.okxApiPassphrase
+        val apiKey = preferences.okxApiKey.trim()
+        val apiSecret = preferences.okxApiSecret.trim()
+        val passphrase = preferences.okxApiPassphrase.trim()
         val isTestnet = preferences.isTestnet 
 
         val loggingInterceptor = HttpLoggingInterceptor().apply {

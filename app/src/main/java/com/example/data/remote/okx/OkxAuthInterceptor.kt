@@ -50,9 +50,9 @@ class OkxAuthInterceptor(
     }
 
     private fun getIso8601Timestamp(): String {
-        return DateTimeFormatter.ISO_INSTANT
-            .withZone(ZoneId.of("UTC"))
-            .format(Instant.now())
+        val sdf = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")
+        sdf.timeZone = java.util.TimeZone.getTimeZone("UTC")
+        return sdf.format(java.util.Date())
     }
 
     private fun getBodyAsString(request: Request): String {

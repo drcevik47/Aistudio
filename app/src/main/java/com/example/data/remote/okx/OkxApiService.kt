@@ -14,12 +14,12 @@ interface OkxApiService {
     // https://www.okx.com/api/v5/account/balance?ccy=MNT,USDT
     @GET("/api/v5/account/balance")
     suspend fun getBalance(
-        @Query("ccy") ccy: String? = null
+        @Query("ccy", encoded = true) ccy: String? = null
     ): OkxResponse<OkxAccountBalance>
 
     @GET("/api/v5/asset/balances")
     suspend fun getAssetBalances(
-        @Query("ccy") ccy: String? = null
+        @Query("ccy", encoded = true) ccy: String? = null
     ): OkxResponse<OkxAssetBalance>
 
     // https://www.okx.com/api/v5/trade/order
