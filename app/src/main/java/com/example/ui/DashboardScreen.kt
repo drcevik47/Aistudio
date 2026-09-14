@@ -460,9 +460,9 @@ fun DashboardScreen(
                                     activeBaseCoin = viewModel.preferences.okxBaseCoin,
                                     currentPrice = state.okxCurrentPrice,
                                     price24hChange = state.price24hChange, // Or Okx specific if added
-                                    isBotActive = state.isBotActive, // If bot works for both
+                                    isBotActive = false, // Always allow manual rebalance for OKX
                                     onManualRebalanceClick = {
-                                        // TODO: Not implemented for OKX yet, just a visual card for now
+                                        viewModel.executeOkxRebalance()
                                     },
                                     exchangeName = "OKX TR"
                                 )
