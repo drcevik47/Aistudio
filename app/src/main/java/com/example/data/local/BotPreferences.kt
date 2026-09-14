@@ -54,6 +54,10 @@ class BotPreferences(context: Context) {
         get() = prefs.getFloat(KEY_STEP_PERCENT, 2.0f).toDouble()
         set(value) = prefs.edit().putFloat(KEY_STEP_PERCENT, value.toFloat()).apply()
 
+    var okxStepPercent: Double
+        get() = prefs.getFloat(KEY_OKX_STEP_PERCENT, 2.0f).toDouble()
+        set(value) = prefs.edit().putFloat(KEY_OKX_STEP_PERCENT, value.toFloat()).apply()
+
     var isBotActive: Boolean
         get() = prefs.getBoolean(KEY_IS_BOT_ACTIVE, false)
         set(value) = prefs.edit().putBoolean(KEY_IS_BOT_ACTIVE, value).apply()
@@ -117,6 +121,7 @@ class BotPreferences(context: Context) {
         private const val KEY_IS_TESTNET = "bybit_is_testnet"
         private const val KEY_IS_CONFIGURED = "bybit_is_configured"
         private const val KEY_STEP_PERCENT = "bybit_step_percent"
+        private const val KEY_OKX_STEP_PERCENT = "okx_step_percent"
         private const val KEY_IS_BOT_ACTIVE = "bybit_is_bot_active"
         private const val KEY_ACTIVE_BUY_ORDER_ID = "active_buy_order_id"
         private const val KEY_ACTIVE_SELL_ORDER_ID = "active_sell_order_id"

@@ -65,6 +65,7 @@ data class MainUiState(
     val okxPortfolioAnalysis: PortfolioAnalysis? = null,
     val activeOrders: List<BybitOrderDto> = emptyList(),
     val stepPercent: Double = 2.0,
+    val okxStepPercent: Double = 2.0,
     val lastRebalancePrice: Double = 0.0,
     val showInitialRebalanceDialog: Boolean = false,
     val isExecutingRebalance: Boolean = false,
@@ -115,6 +116,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             isTestnet = preferences.isTestnet,
             isBotActive = preferences.isBotActive,
             stepPercent = preferences.stepPercent,
+            okxStepPercent = preferences.okxStepPercent,
             lastRebalancePrice = preferences.lastRebalancePrice,
             showApiKeyDialog = !preferences.isConfigured && preferences.okxApiKey.isBlank()
         )
@@ -234,7 +236,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
 
 
-            fetchOkxData()
+            fetchOkxData(cycleCount)
             _uiState.update {
 
                 it.copy(
@@ -299,9 +301,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun updateStepPercent(percent: Double) {
-        preferences.stepPercent = percent
-        _uiState.update { it.copy(stepPercent = percent) }
+    fun updateStepPercent(bybitStep: Double, okxStep: Double) {
+        preferences.stepPercent = bybitStep
+        preferences.okxStepPercent = okxStep
+        _uiState.update { it.copy(stepPercent = bybitStep, okxStepPercent = okxStep) }
         recalculateGridPlan()
     }
 
@@ -381,7 +384,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     !preferences.isBotActive &&
                     analysis.deltaUsdt >= 1.0
 
-            fetchOkxData()
+            fetchOkxData(0)
             _uiState.update {
                 it.copy(
                     isLoading = false,
@@ -401,7 +404,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
 
-    private suspend fun fetchOkxData() {
+    private suspend fun fetchOkxData(cycleCount: Int = 0) {
         if (preferences.okxApiKey.isBlank()) return
         
         var okxCurrentPrice = _uiState.value.okxCurrentPrice
@@ -409,15 +412,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         var okxBaseQty = _uiState.value.okxBaseCoinBalance
         var okxAnalysis = _uiState.value.okxPortfolioAnalysis
 
-        val okxTickerRes = okxRepository.getTicker()
-        okxTickerRes.onSuccess { ticker ->
-            okxCurrentPrice = ticker.last.toDoubleOrNull() ?: 0.0
+        if (cycleCount % 2 == 0 || okxCurrentPrice <= 0.0) {
+            val okxTickerRes = okxRepository.getTicker()
+            okxTickerRes.onSuccess { ticker ->
+                okxCurrentPrice = ticker.last.toDoubleOrNull() ?: 0.0
+            }
         }
 
-        val okxBalanceRes = okxRepository.getWalletBalance()
-        okxBalanceRes.onSuccess { map ->
-            okxUsdt = map["USDT"] ?: 0.0
-            okxBaseQty = map[preferences.okxBaseCoin] ?: 0.0
+        if (cycleCount % 2 == 0 || okxUsdt <= 0.0) {
+            val okxBalanceRes = okxRepository.getWalletBalance()
+            okxBalanceRes.onSuccess { map ->
+                okxUsdt = map["USDT"] ?: 0.0
+                okxBaseQty = map[preferences.okxBaseCoin] ?: 0.0
+            }
         }
 
         if (okxCurrentPrice > 0.0) {

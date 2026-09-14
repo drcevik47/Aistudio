@@ -93,7 +93,7 @@ class OkxRepository(
                             map[detail.ccy] = (map[detail.ccy] ?: 0.0) + avail
                         }
                         fetchSuccess = true
-                        log(LogLevel.INFO, "OKX_API", "account/balance Başarılı. OKX TR Al-Sat bakiye çekildi.")
+                        // Removed spammy log
                     } else {
                         errorMsg += "[account/balance: ${tradeRes.code} - ${tradeRes.msg}] "
                     }
@@ -111,7 +111,7 @@ class OkxRepository(
                                 map[asset.ccy] = (map[asset.ccy] ?: 0.0) + avail
                             }
                             fetchSuccess = true
-                            log(LogLevel.INFO, "OKX_API", "asset/balances Başarılı. OKX TR Fonlama bakiye çekildi.")
+                            // Removed spammy log
                         } else {
                             errorMsg += "[asset/balances: ${fundRes.code} - ${fundRes.msg}] "
                         }

@@ -564,10 +564,11 @@ fun DashboardScreen(
             if (showSettingsDialog) {
                 SettingsDialog(
                     currentStepPercent = state.stepPercent,
+                    okxStepPercent = state.okxStepPercent,
                     isTestnet = state.isTestnet,
                     bybitSymbol = viewModel.preferences.bybitSymbol,
                     okxSymbol = viewModel.preferences.okxSymbol,
-                    onUpdateStepPercent = { viewModel.updateStepPercent(it) },
+                    onUpdateStepPercent = { bybit, okx -> viewModel.updateStepPercent(bybit, okx) },
                     onUpdateSymbols = { bybit, okx -> viewModel.updateSymbols(bybit, okx) },
                     onOpenApiKeys = {
                         showSettingsDialog = false
