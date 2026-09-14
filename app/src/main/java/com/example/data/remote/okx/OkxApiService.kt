@@ -17,6 +17,11 @@ interface OkxApiService {
         @Query("ccy") ccy: String? = null
     ): OkxResponse<OkxAccountBalance>
 
+    @GET("/api/v5/asset/balances")
+    suspend fun getAssetBalances(
+        @Query("ccy") ccy: String? = null
+    ): OkxResponse<OkxAccountBalance>
+
     // https://www.okx.com/api/v5/trade/order
     @POST("/api/v5/trade/order")
     suspend fun placeOrder(

@@ -329,7 +329,7 @@ fun PortfolioCard(
                             color = if (isBalanced) MinimalSuccessDark else MinimalPrimaryDark
                         )
                         Text(
-                            text = analysis.description,
+                            text = analysis.description.replace("BASE", activeBaseCoin),
                             fontSize = 11.sp,
                             color = MinimalTextSecondary,
                             modifier = Modifier.padding(top = 1.dp)

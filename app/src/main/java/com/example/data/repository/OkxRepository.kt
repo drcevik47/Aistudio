@@ -47,7 +47,7 @@ class OkxRepository(
             .readTimeout(15, TimeUnit.SECONDS)
             .build()
 
-        val baseUrl = "https://www.okx.com"
+        val baseUrl = "https://tr.okx.com"
 
         return Retrofit.Builder()
             .baseUrl(baseUrl)
@@ -78,16 +78,18 @@ class OkxRepository(
         return withContext(Dispatchers.IO) {
             try {
                 val api = createApiService()
-                val response = api.getBalance("${preferences.okxBaseCoin},USDT")
-                if (response.code == "0" && response.data.isNotEmpty()) {
-                    val map = mutableMapOf<String, Double>()
-                    response.data.first().details.forEach { detail ->
-                        map[detail.ccy] = detail.availEq.toDoubleOrNull() ?: 0.0
+                val map = mutableMapOf<String, Double>()
+                
+                // Fetch Trading Account
+                val tradeRes = api.getBalance("${preferences.okxBaseCoin},USDT")
+                if (tradeRes.code == "0" && tradeRes.data.isNotEmpty()) {
+                    tradeRes.data.first().details.forEach { detail ->
+                        val avail = detail.availEq.toDoubleOrNull() ?: detail.availBal.toDoubleOrNull() ?: 0.0
+                        map[detail.ccy] = (map[detail.ccy] ?: 0.0) + avail
                     }
-                    Result.success(map)
-                } else {
-                    Result.failure(Exception(response.msg))
                 }
+                
+                Result.success(map)
             } catch (e: Exception) {
                 Result.failure(e)
             }
