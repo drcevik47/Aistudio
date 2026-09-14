@@ -70,6 +70,22 @@ class BotPreferences(context: Context) {
         get() = prefs.getString(KEY_ACTIVE_SELL_ORDER_ID, "") ?: ""
         set(value) = prefs.edit().putString(KEY_ACTIVE_SELL_ORDER_ID, value).apply()
 
+    var isOkxBotActive: Boolean
+        get() = prefs.getBoolean("okx_is_bot_active", false)
+        set(value) = prefs.edit().putBoolean("okx_is_bot_active", value).apply()
+
+    var okxActiveBuyOrderId: String
+        get() = prefs.getString("okx_active_buy_id", "") ?: ""
+        set(value) = prefs.edit().putString("okx_active_buy_id", value).apply()
+
+    var okxActiveSellOrderId: String
+        get() = prefs.getString("okx_active_sell_id", "") ?: ""
+        set(value) = prefs.edit().putString("okx_active_sell_id", value).apply()
+
+    var okxLastRebalancePrice: Double
+        get() = prefs.getFloat("okx_last_rebalance_price", 0.0f).toDouble()
+        set(value) = prefs.edit().putFloat("okx_last_rebalance_price", value.toFloat()).apply()
+
     var lastRebalancePrice: Double
         get() {
             val str = prefs.getString(KEY_LAST_REBALANCE_PRICE_STR, null)

@@ -63,6 +63,9 @@ data class MainUiState(
     val okxUsdtBalance: Double = 0.0,
     val okxBaseCoinBalance: Double = 0.0,
     val okxPortfolioAnalysis: PortfolioAnalysis? = null,
+    val okxGridPlan: GridOrdersPlan? = null,
+    val okxActiveOrders: List<com.example.data.remote.okx.model.OkxOrderDetails> = emptyList(),
+    val isOkxBotActive: Boolean = false,
     val activeOrders: List<BybitOrderDto> = emptyList(),
     val stepPercent: Double = 2.0,
     val okxStepPercent: Double = 2.0,
@@ -477,12 +480,37 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
 
+        var okxOrders = emptyList<com.example.data.remote.okx.model.OkxOrderDetails>()
+        if (cycleCount % 2 == 0) {
+            val pendingRes = okxRepository.getPendingOrders()
+            pendingRes.onSuccess { list ->
+                okxOrders = list
+            }
+        }
+
+        val anchorOkxBasePrice = if (preferences.isOkxBotActive && preferences.okxLastRebalancePrice > 0.0) {
+            preferences.okxLastRebalancePrice
+        } else {
+            okxCurrentPrice
+        }
+        val okxPlan = if (okxCurrentPrice > 0.0) {
+            RebalanceEngine.calculateGridOrders(
+                usdtBalance = okxUsdt,
+                baseCoinBalance = okxBaseQty,
+                basePrice = anchorOkxBasePrice,
+                stepPercent = preferences.okxStepPercent
+            )
+        } else null
+
         _uiState.update {
             it.copy(
                 okxCurrentPrice = okxCurrentPrice,
                 okxUsdtBalance = okxUsdt,
                 okxBaseCoinBalance = okxBaseQty,
-                okxPortfolioAnalysis = okxAnalysis
+                okxPortfolioAnalysis = okxAnalysis,
+                okxActiveOrders = okxOrders,
+                okxGridPlan = okxPlan,
+                isOkxBotActive = preferences.isOkxBotActive
             )
         }
     }
@@ -553,6 +581,62 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             )
             refreshData()
+        }
+    }
+
+    fun startOkxBot() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _uiState.update { it.copy(isLoading = true) }
+            val startRes = okxRepository.reconcileGridOrders(callerTag = "StartOkxBot")
+            startRes.onSuccess {
+                preferences.isOkxBotActive = true
+                preferences.okxLastRebalancePrice = _uiState.value.okxCurrentPrice
+                // We restart the global service since it will now handle both loops if active
+                try {
+                    com.example.service.TradingBotService.start(getApplication())
+                } catch (e: Exception) {
+                    // Ignore
+                }
+            }
+            startRes.onFailure { err ->
+                _uiState.update { it.copy(errorMessage = "OKX Bot başlatılamadı: ${err.message}") }
+            }
+            fetchOkxData(0)
+            _uiState.update { it.copy(isLoading = false, isOkxBotActive = preferences.isOkxBotActive) }
+        }
+    }
+
+    fun stopOkxBot() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _uiState.update { it.copy(isLoading = true) }
+            preferences.isOkxBotActive = false
+            preferences.okxActiveBuyOrderId = ""
+            preferences.okxActiveSellOrderId = ""
+            // We cancel the specific OKX active orders
+            val pendingRes = okxRepository.getPendingOrders()
+            pendingRes.onSuccess { list ->
+                list.forEach { order ->
+                    okxRepository.cancelOrder(order.ordId)
+                }
+            }
+            fetchOkxData(0)
+            _uiState.update { it.copy(isLoading = false, isOkxBotActive = false) }
+        }
+    }
+
+    fun cancelAllOkxOrders() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _uiState.update { it.copy(isLoading = true) }
+            val pendingRes = okxRepository.getPendingOrders()
+            pendingRes.onSuccess { list ->
+                list.forEach { order ->
+                    okxRepository.cancelOrder(order.ordId)
+                }
+            }
+            preferences.okxActiveBuyOrderId = ""
+            preferences.okxActiveSellOrderId = ""
+            fetchOkxData(0)
+            _uiState.update { it.copy(isLoading = false) }
         }
     }
 

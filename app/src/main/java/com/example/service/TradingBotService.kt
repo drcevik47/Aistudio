@@ -40,6 +40,7 @@ class TradingBotService : Service() {
     private var wifiLock: WifiManager.WifiLock? = null
     private lateinit var preferences: BotPreferences
     private lateinit var repository: BybitRepository
+    private lateinit var okxRepository: com.example.data.repository.OkxRepository
     private lateinit var wsClient: BybitWebSocketClient
     private lateinit var database: com.example.data.local.AppDatabase
     private var pollingJob: Job? = null
@@ -53,6 +54,7 @@ class TradingBotService : Service() {
         val app = application as BybitBotApp
         preferences = app.preferences
         repository = app.repository
+        okxRepository = app.okxRepository
         database = app.database
         wsClient = BybitWebSocketClient(serviceScope)
         createNotificationChannels()
@@ -158,21 +160,32 @@ class TradingBotService : Service() {
             var cycleCount = 0
             while (isActive && isBotLoopRunning.get()) {
                 try {
-                    if (currentBasePrice <= 0.0 || cycleCount % 3 == 0) {
-                        val tickerRes = repository.getTicker()
-                        tickerRes.onSuccess { ticker ->
-                            currentBasePrice = ticker.currentPrice
+                    // --- BYBIT RECONCILIATION ---
+                    if (preferences.isBotActive) {
+                        if (currentBasePrice <= 0.0 || cycleCount % 3 == 0) {
+                            val tickerRes = repository.getTicker()
+                            tickerRes.onSuccess { ticker ->
+                                currentBasePrice = ticker.currentPrice
+                            }
+                        }
+
+                        if (cycleCount % 3 == 0 || lastUsdtBalance <= 0.0) {
+                            val balanceRes = repository.getWalletBalance()
+                            balanceRes.onSuccess { balances ->
+                                lastUsdtBalance = balances["USDT"] ?: 0.0
+                                lastBaseBalance = balances["${preferences.bybitBaseCoin}"] ?: 0.0
+                                updateNotification()
+                            }
                         }
                     }
 
-                    if (cycleCount % 3 == 0 || lastUsdtBalance <= 0.0) {
-                        val balanceRes = repository.getWalletBalance()
-                        balanceRes.onSuccess { balances ->
-                            lastUsdtBalance = balances["USDT"] ?: 0.0
-                            lastBaseBalance = balances["${preferences.bybitBaseCoin}"] ?: 0.0
-                            updateNotification()
+                    // --- OKX RECONCILIATION ---
+                    if (preferences.isOkxBotActive) {
+                        if (cycleCount % 3 == 0) {
+                            okxRepository.reconcileGridOrders(callerTag = "Watchdog-OKX")
                         }
                     }
+
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {

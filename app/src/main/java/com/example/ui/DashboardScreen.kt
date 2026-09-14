@@ -459,12 +459,46 @@ fun DashboardScreen(
                                     analysis = state.okxPortfolioAnalysis,
                                     activeBaseCoin = viewModel.preferences.okxBaseCoin,
                                     currentPrice = state.okxCurrentPrice,
-                                    price24hChange = state.price24hChange, // Or Okx specific if added
+                                    price24hChange = state.okxPrice24hChange, // Or Okx specific if added
                                     isBotActive = false, // Always allow manual rebalance for OKX
                                     onManualRebalanceClick = {
                                         viewModel.executeOkxRebalance()
                                     },
                                     exchangeName = "OKX TR"
+                                )
+                            }
+                            
+                            // OKX Grid Limit Orders Card
+                            item {
+                                ActiveOrdersCard(
+                                    gridPlan = state.okxGridPlan,
+                                    // Map OKX orders to BybitOrderDto just for UI display compatibility
+                                    activeOrders = state.okxActiveOrders.map { okxOrder ->
+                                        com.example.data.remote.model.BybitOrderDto(
+                                            orderId = okxOrder.ordId,
+                                            orderLinkId = okxOrder.clOrdId,
+                                            symbol = okxOrder.instId,
+                                            price = okxOrder.px,
+                                            qty = okxOrder.sz,
+                                            side = okxOrder.side.replaceFirstChar { it.uppercase() },
+                                            orderStatus = okxOrder.state,
+                                            orderType = "Limit",
+                                            cumExecQty = okxOrder.accFillSz,
+                                            avgPrice = okxOrder.avgPx,
+                                            createdTime = okxOrder.cTime,
+                                            updatedTime = okxOrder.uTime
+                                        )
+                                    },
+                                    currentPrice = state.okxCurrentPrice,
+                                    isBotActive = state.isOkxBotActive,
+                                    stepPercent = viewModel.preferences.okxStepPercent,
+                                    activeBaseCoin = viewModel.preferences.okxBaseCoin,
+                                    lastRebalancePrice = viewModel.preferences.okxLastRebalancePrice,
+                                    isLoading = state.isLoading,
+                                    onStartBot = { viewModel.startOkxBot() },
+                                    onStopBot = { viewModel.stopOkxBot() },
+                                    onCancelAllOrders = { viewModel.cancelAllOkxOrders() },
+                                    onEditBasePriceClick = { } // Not implemented separately for OKX yet, skip
                                 )
                             }
                         }
