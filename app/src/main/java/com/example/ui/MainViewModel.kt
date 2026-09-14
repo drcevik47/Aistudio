@@ -224,7 +224,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 balanceRes.onSuccess { map ->
                     allBalances = map
                     usdt = map["USDT"]?.quantity ?: 0.0
-                    baseQty = map[_uiState.value.activeBaseCoin]?.quantity ?: 0.0
+                    baseQty = map[preferences.bybitBaseCoin]?.quantity ?: 0.0
                 }
             }
 
@@ -412,7 +412,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val balanceRes = repository.getWalletBalance()
             balanceRes.onSuccess { map ->
                 usdt = map["USDT"]?.quantity ?: 0.0
-                baseQty = map[_uiState.value.activeBaseCoin]?.quantity ?: 0.0
+                baseQty = map[preferences.bybitBaseCoin]?.quantity ?: 0.0
             }.onFailure { err ->
                 _uiState.update { it.copy(errorMessage = "Bakiye çekilemedi: ${err.message}", isLoading = false) }
                 return@launch
