@@ -14,6 +14,34 @@ class BotPreferences(context: Context) {
         get() = prefs.getString(KEY_API_SECRET, "") ?: ""
         set(value) = prefs.edit().putString(KEY_API_SECRET, value.trim()).apply()
 
+    var okxApiKey: String
+        get() = prefs.getString(KEY_OKX_API_KEY, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_OKX_API_KEY, value.trim()).apply()
+
+    var okxApiSecret: String
+        get() = prefs.getString(KEY_OKX_API_SECRET, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_OKX_API_SECRET, value.trim()).apply()
+
+    var okxApiPassphrase: String
+        get() = prefs.getString(KEY_OKX_API_PASSPHRASE, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_OKX_API_PASSPHRASE, value.trim()).apply()
+
+    var bybitSymbol: String
+        get() = prefs.getString(KEY_BYBIT_SYMBOL, "MNTUSDT") ?: "MNTUSDT"
+        set(value) = prefs.edit().putString(KEY_BYBIT_SYMBOL, value.trim().uppercase()).apply()
+
+    var bybitBaseCoin: String
+        get() = prefs.getString(KEY_BYBIT_BASE_COIN, "MNT") ?: "MNT"
+        set(value) = prefs.edit().putString(KEY_BYBIT_BASE_COIN, value.trim().uppercase()).apply()
+
+    var okxSymbol: String
+        get() = prefs.getString(KEY_OKX_SYMBOL, "BTC-USDT") ?: "BTC-USDT"
+        set(value) = prefs.edit().putString(KEY_OKX_SYMBOL, value.trim().uppercase()).apply()
+
+    var okxBaseCoin: String
+        get() = prefs.getString(KEY_OKX_BASE_COIN, "BTC") ?: "BTC"
+        set(value) = prefs.edit().putString(KEY_OKX_BASE_COIN, value.trim().uppercase()).apply()
+
     var isTestnet: Boolean
         get() = prefs.getBoolean(KEY_IS_TESTNET, false)
         set(value) = prefs.edit().putBoolean(KEY_IS_TESTNET, value).apply()
@@ -79,6 +107,13 @@ class BotPreferences(context: Context) {
     companion object {
         private const val KEY_API_KEY = "bybit_api_key"
         private const val KEY_API_SECRET = "bybit_api_secret"
+        private const val KEY_OKX_API_KEY = "okx_api_key"
+        private const val KEY_OKX_API_SECRET = "okx_api_secret"
+        private const val KEY_OKX_API_PASSPHRASE = "okx_api_passphrase"
+        private const val KEY_BYBIT_SYMBOL = "bybit_symbol"
+        private const val KEY_BYBIT_BASE_COIN = "bybit_base_coin"
+        private const val KEY_OKX_SYMBOL = "okx_symbol"
+        private const val KEY_OKX_BASE_COIN = "okx_base_coin"
         private const val KEY_IS_TESTNET = "bybit_is_testnet"
         private const val KEY_IS_CONFIGURED = "bybit_is_configured"
         private const val KEY_STEP_PERCENT = "bybit_step_percent"

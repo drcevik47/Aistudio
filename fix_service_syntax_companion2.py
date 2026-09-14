@@ -1,4 +1,6 @@
-package com.example.service
+import urllib.request
+
+content = """package com.example.service
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -388,7 +390,7 @@ class TradingBotService : Service() {
                     try {
                         context.startForegroundService(intent)
                     } catch(e: Exception) {
-                        if (e is Exception && (e.javaClass.simpleName == "ForegroundServiceStartNotAllowedException" || e.message?.contains("ForegroundServiceStartNotAllowedException") == true || e.cause?.javaClass?.simpleName == "ForegroundServiceStartNotAllowedException")) {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && (e is android.app.ForegroundServiceStartNotAllowedException || e.cause is android.app.ForegroundServiceStartNotAllowedException || e.message?.contains("ForegroundServiceStartNotAllowedException") == true)) {
                             Log.w("TradingBotService", "Foreground service start not allowed, starting normally.")
                             context.startService(intent)
                         } else {
@@ -411,3 +413,7 @@ class TradingBotService : Service() {
         }
     }
 }
+"""
+
+with open("app/src/main/java/com/example/service/TradingBotService.kt", "w") as f:
+    f.write(content)

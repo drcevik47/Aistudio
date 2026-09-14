@@ -80,6 +80,7 @@ import com.example.ui.components.LogViewerScreen
 import com.example.ui.components.OrderHistoryScreen
 import com.example.ui.components.PortfolioCard
 import com.example.ui.components.SettingsDialog
+
 import com.example.ui.components.TradeAnalysisScreen
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -117,6 +118,7 @@ fun DashboardScreen(
 
     var selectedTab by remember { mutableIntStateOf(0) }
     var showSettingsDialog by remember { mutableStateOf(false) }
+    var showOkxApiKeysDialog by remember { mutableStateOf(false) }
     var showEditBasePriceDialog by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -439,6 +441,7 @@ fun DashboardScreen(
                         item {
                             PortfolioCard(
                                 analysis = state.portfolioAnalysis,
+                                activeBaseCoin = viewModel.preferences.bybitBaseCoin,
                                 currentPrice = state.currentPrice,
                                 price24hChange = state.price24hChange,
                                 isBotActive = state.isBotActive,
@@ -456,7 +459,8 @@ fun DashboardScreen(
                                 currentPrice = state.currentPrice,
                                 isBotActive = state.isBotActive,
                                 stepPercent = state.stepPercent,
-                                lastRebalancePrice = state.lastRebalancePrice,
+                                activeBaseCoin = viewModel.preferences.bybitBaseCoin,
+                                lastRebalancePrice = viewModel.preferences.lastRebalancePrice,
                                 isLoading = state.isLoading,
                                 onStartBot = { viewModel.startBot() },
                                 onStopBot = { viewModel.stopBot() },
@@ -470,9 +474,10 @@ fun DashboardScreen(
                             Spacer(modifier = Modifier.height(16.dp))
                             com.example.ui.components.SimulationCard(
                                 currentUsdtBalance = state.portfolioAnalysis?.usdtBalance ?: 0.0,
-                                currentMntBalance = state.portfolioAnalysis?.mntBalance ?: 0.0,
-                                currentBasePrice = state.lastRebalancePrice,
-                                stepPercent = state.stepPercent
+                                currentBaseBalance = state.portfolioAnalysis?.baseCoinBalance ?: 0.0,
+                                currentBasePrice = viewModel.preferences.lastRebalancePrice,
+                                stepPercent = state.stepPercent,
+                                activeBaseCoin = viewModel.preferences.bybitBaseCoin,
                             )
                         }
                     }
@@ -482,6 +487,8 @@ fun DashboardScreen(
                         state = tradeAnalysisState,
                         isApiConfigured = state.isConfigured,
                         currentPrice = state.currentPrice,
+                        activeBaseCoin = viewModel.preferences.bybitBaseCoin,
+                        activeSymbol = viewModel.preferences.bybitSymbol,
                         onFetchAnalysis = { symbol, days, startTimestamp -> viewModel.fetchTradeAnalysis(symbol, days, startTimestamp) },
                         onClearLocalDatabase = { viewModel.clearLocalExchangeDatabase() }
                     )
@@ -492,6 +499,8 @@ fun DashboardScreen(
                         exchangeTrades = exchangeTrades,
                         liveAnalysis = liveAnalysis,
                         currentPrice = state.currentPrice,
+                        activeBaseCoin = viewModel.preferences.bybitBaseCoin,
+                        activeSymbol = viewModel.preferences.bybitSymbol,
                         onClearOrders = { viewModel.clearOrders() },
                         onClearExchangeTrades = { viewModel.clearLocalExchangeDatabase() },
                         onExportKlines = { symbol, interval, format, start, end, context ->
@@ -511,6 +520,7 @@ fun DashboardScreen(
             if (state.showInitialRebalanceDialog && state.portfolioAnalysis != null) {
                 InitialRebalanceDialog(
                     analysis = state.portfolioAnalysis!!,
+                    baseCoin = viewModel.preferences.bybitBaseCoin,
                     isExecuting = state.isExecutingRebalance,
                     onConfirm = { viewModel.executeInitialRebalance() },
                     onDismiss = { viewModel.dismissInitialRebalanceDialog() }
@@ -523,7 +533,7 @@ fun DashboardScreen(
                     initialApiKey = state.apiKey,
                     initialApiSecret = state.apiSecret,
                     initialIsTestnet = state.isTestnet,
-                    isDismissable = state.isConfigured,
+                    isDismissable = true,
                     isLoading = state.isLoading,
                     onDismiss = { viewModel.closeApiKeyDialog() },
                     onSave = { key, secret, testnet ->
@@ -537,22 +547,45 @@ fun DashboardScreen(
                 SettingsDialog(
                     currentStepPercent = state.stepPercent,
                     isTestnet = state.isTestnet,
+                    bybitSymbol = viewModel.preferences.bybitSymbol,
+                    okxSymbol = viewModel.preferences.okxSymbol,
                     onUpdateStepPercent = { viewModel.updateStepPercent(it) },
+                    onUpdateSymbols = { bybit, okx -> viewModel.updateSymbols(bybit, okx) },
                     onOpenApiKeys = {
                         showSettingsDialog = false
                         viewModel.openApiKeyDialog()
                     },
+                    onOpenOkxApiKeys = {
+                        showSettingsDialog = false
+                        showOkxApiKeysDialog = true
+                    },
                     onDismiss = { showSettingsDialog = false }
+                )
+            }
+
+            if (showOkxApiKeysDialog) {
+                com.example.ui.components.OkxApiKeySetupDialog(
+                    initialApiKey = state.okxApiKey,
+                    initialApiSecret = state.okxApiSecret,
+                    initialPassphrase = state.okxApiPassphrase,
+                    isDismissable = true,
+                    isLoading = state.isLoading,
+                    onDismiss = { showOkxApiKeysDialog = false },
+                    onSave = { key, secret, passphrase ->
+                        viewModel.saveOkxApiCredentials(key, secret, passphrase)
+                        showOkxApiKeysDialog = false
+                    }
                 )
             }
 
             // Edit Base Price Dialog
             if (showEditBasePriceDialog) {
                 EditBasePriceDialog(
-                    currentBasePrice = if (state.lastRebalancePrice > 0.0) state.lastRebalancePrice else state.currentPrice,
+                    currentBasePrice = if (viewModel.preferences.lastRebalancePrice > 0.0) viewModel.preferences.lastRebalancePrice else state.currentPrice,
                     currentTickerPrice = state.currentPrice,
                     isBotActive = state.isBotActive,
                     stepPercent = state.stepPercent,
+                    activeBaseCoin = viewModel.preferences.bybitBaseCoin,
                     onGetLastRealFilledTradeInfo = { callback ->
                         viewModel.getLastRealFilledTradeInfo(callback)
                     },
@@ -573,6 +606,7 @@ fun EditBasePriceDialog(
     currentTickerPrice: Double,
     isBotActive: Boolean,
     stepPercent: Double,
+    activeBaseCoin: String,
     onGetLastRealFilledTradeInfo: ((LastFilledTradeInfo?) -> Unit) -> Unit,
     onConfirm: (Double) -> Unit,
     onDismiss: () -> Unit
@@ -740,7 +774,7 @@ fun EditBasePriceDialog(
                                     }
                                     val timeStr = if (info.timestamp > 0) timeFormatter.format(Date(info.timestamp)) else ""
                                     Text(
-                                        text = "${info.source}${if (timeStr.isNotBlank()) " ($timeStr)" else ""}${if (info.qty > 0) " • ${RebalanceEngine.format2(info.qty)} MNT" else ""}",
+                                        text = "${info.source}${if (timeStr.isNotBlank()) " ($timeStr)" else ""}${if (info.qty > 0) " • ${RebalanceEngine.format2(info.qty)} ${activeBaseCoin}" else ""}",
                                         fontSize = 9.sp,
                                         color = MinimalTextSecondary
                                     )

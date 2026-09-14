@@ -62,6 +62,7 @@ import com.example.ui.theme.MinimalTextSecondary
 @Composable
 fun PortfolioCard(
     analysis: PortfolioAnalysis?,
+    activeBaseCoin: String,
     currentPrice: Double,
     price24hChange: Double,
     isBotActive: Boolean,
@@ -133,7 +134,7 @@ fun PortfolioCard(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "MNT / USDT",
+                        text = "${activeBaseCoin} / USDT",
                         fontWeight = FontWeight.Bold,
                         fontSize = 13.sp,
                         color = MinimalTextPrimary
@@ -177,13 +178,13 @@ fun PortfolioCard(
 
             // Balances & Minimalist Progress Bars
             val usdtBalance = analysis?.usdtBalance ?: 0.0
-            val mntBalance = analysis?.mntBalance ?: 0.0
-            val mntValueUsdt = analysis?.mntValueUsdt ?: 0.0
+            val baseCoinBalance = analysis?.baseCoinBalance ?: 0.0
+            val baseValueUsdt = analysis?.baseValueUsdt ?: 0.0
             val usdtPct = analysis?.usdtPercent?.toFloat() ?: 50f
-            val mntPct = analysis?.mntPercent?.toFloat() ?: 50f
+            val basePct = analysis?.basePercent?.toFloat() ?: 50f
 
             val animatedUsdtPct by animateFloatAsState(targetValue = usdtPct.coerceIn(0f, 100f), label = "usdt_bar")
-            val animatedMntPct by animateFloatAsState(targetValue = mntPct.coerceIn(0f, 100f), label = "mnt_bar")
+            val animatedBasePct by animateFloatAsState(targetValue = basePct.coerceIn(0f, 100f), label = "mnt_bar")
 
             // USDT Progress Item
             Column(modifier = Modifier.fillMaxWidth()) {
@@ -242,26 +243,26 @@ fun PortfolioCard(
                 ) {
                     Row(verticalAlignment = Alignment.Bottom) {
                         Text(
-                            text = "MNT Balance ",
+                            text = "${activeBaseCoin} Balance ",
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Medium,
                             color = MinimalTextSecondary
                         )
                         Text(
-                            text = "(${RebalanceEngine.formatCryptoQty(mntBalance)} MNT)",
+                            text = "(${RebalanceEngine.formatCryptoQty(baseCoinBalance)} ${activeBaseCoin})",
                             fontSize = 11.sp,
                             color = MinimalTextMuted
                         )
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = "$${RebalanceEngine.format2(mntValueUsdt)} ",
+                            text = "$${RebalanceEngine.format2(baseValueUsdt)} ",
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Bold,
                             color = MinimalTextPrimary
                         )
                         Text(
-                            text = "(${RebalanceEngine.format2(mntPct.toDouble())}%)",
+                            text = "(${RebalanceEngine.format2(basePct.toDouble())}%)",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Normal,
                             color = MinimalTextMuted
@@ -278,7 +279,7 @@ fun PortfolioCard(
                 ) {
                     Box(
                         modifier = Modifier
-                            .fillMaxWidth(animatedMntPct / 100f)
+                            .fillMaxWidth(animatedBasePct / 100f)
                             .fillMaxHeight()
                             .clip(RoundedCornerShape(999.dp))
                             .background(MinimalSecondary)

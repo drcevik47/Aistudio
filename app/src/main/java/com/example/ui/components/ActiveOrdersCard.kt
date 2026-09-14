@@ -70,6 +70,7 @@ fun ActiveOrdersCard(
     currentPrice: Double,
     isBotActive: Boolean,
     stepPercent: Double,
+    activeBaseCoin: String,
     lastRebalancePrice: Double = 0.0,
     isLoading: Boolean,
     onStartBot: () -> Unit,
@@ -201,7 +202,7 @@ fun ActiveOrdersCard(
                     ?: gridPlan?.sellLimitPrice
                     ?: (basePriceToShow * (1.0 + stepPercent / 100.0))
                 val sellQty: Double = openSellOrder?.qty?.toDoubleOrNull()
-                    ?: gridPlan?.sellMntQty
+                    ?: gridPlan?.sellBaseQty
                     ?: 0.0
                 val sellUsdt: Double = if (openSellOrder != null) (sellQty * sellPrice) else (gridPlan?.sellUsdtValue ?: (sellQty * sellPrice))
                 val sellDiffPct: Double = if (currentPrice > 0.0) ((sellPrice - currentPrice) / currentPrice) * 100.0 else stepPercent
@@ -289,7 +290,7 @@ fun ActiveOrdersCard(
                             }
                         }
                         Text(
-                            text = "Miktar: ${RebalanceEngine.format4(sellQty)} MNT (~$${RebalanceEngine.format2(sellUsdt)})",
+                            text = "Miktar: ${RebalanceEngine.format4(sellQty)} ${activeBaseCoin} (~$${RebalanceEngine.format2(sellUsdt)})",
                             fontSize = 11.sp,
                             color = MinimalTextSecondary,
                             modifier = Modifier.padding(top = 2.dp)
@@ -377,7 +378,7 @@ fun ActiveOrdersCard(
                     ?: gridPlan?.buyLimitPrice
                     ?: (basePriceToShow * (1.0 - stepPercent / 100.0))
                 val buyQty: Double = openBuyOrder?.qty?.toDoubleOrNull()
-                    ?: gridPlan?.buyMntQty
+                    ?: gridPlan?.buyBaseQty
                     ?: 0.0
                 val buyUsdt: Double = if (openBuyOrder != null) (buyQty * buyPrice) else (gridPlan?.buyUsdtValue ?: (buyQty * buyPrice))
                 val buyDiffPct: Double = if (currentPrice > 0.0) ((currentPrice - buyPrice) / currentPrice) * 100.0 else stepPercent
@@ -465,7 +466,7 @@ fun ActiveOrdersCard(
                             }
                         }
                         Text(
-                            text = "Miktar: ${RebalanceEngine.format4(buyQty)} MNT (~$${RebalanceEngine.format2(buyUsdt)})",
+                            text = "Miktar: ${RebalanceEngine.format4(buyQty)} ${activeBaseCoin} (~$${RebalanceEngine.format2(buyUsdt)})",
                             fontSize = 11.sp,
                             color = MinimalTextSecondary,
                             modifier = Modifier.padding(top = 2.dp)

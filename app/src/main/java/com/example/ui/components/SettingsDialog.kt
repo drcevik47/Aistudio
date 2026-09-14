@@ -1,5 +1,10 @@
 package com.example.ui.components
 
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.ui.graphics.Color
+import androidx.compose.runtime.mutableStateOf
+
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -47,7 +52,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -76,11 +80,17 @@ import com.example.ui.theme.MinimalTextSecondary
 fun SettingsDialog(
     currentStepPercent: Double,
     isTestnet: Boolean,
+    bybitSymbol: String,
+    okxSymbol: String,
     onUpdateStepPercent: (Double) -> Unit,
+    onUpdateSymbols: (String, String) -> Unit,
     onOpenApiKeys: () -> Unit,
+    onOpenOkxApiKeys: () -> Unit,
     onDismiss: () -> Unit
 ) {
     var stepSlider by remember(currentStepPercent) { mutableFloatStateOf(currentStepPercent.toFloat()) }
+    var currentBybitSymbol by remember(bybitSymbol) { mutableStateOf(bybitSymbol) }
+    var currentOkxSymbol by remember(okxSymbol) { mutableStateOf(okxSymbol) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -223,6 +233,55 @@ fun SettingsDialog(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
+                // Symbol Configuration
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MinimalSurfaceElevated),
+                    shape = RoundedCornerShape(16.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MinimalSurfaceBorderLight)
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Text(
+                            text = "İşlem Çiftleri (Trading Pairs)",
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 13.sp,
+                            color = MinimalTextPrimary
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            OutlinedTextField(
+                                value = currentBybitSymbol,
+                                onValueChange = { currentBybitSymbol = it.uppercase() },
+                                label = { Text("Bybit", fontSize = 11.sp) },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true,
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = MinimalPrimary,
+                                    unfocusedBorderColor = MinimalSurfaceBorder,
+                                    focusedContainerColor = Color.Transparent,
+                                    unfocusedContainerColor = Color.Transparent
+                                )
+                            )
+                            
+                            OutlinedTextField(
+                                value = currentOkxSymbol,
+                                onValueChange = { currentOkxSymbol = it.uppercase() },
+                                label = { Text("OKX TR", fontSize = 11.sp) },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true,
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = MinimalPrimary,
+                                    unfocusedBorderColor = MinimalSurfaceBorder,
+                                    focusedContainerColor = Color.Transparent,
+                                    unfocusedContainerColor = Color.Transparent
+                                )
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
                 // API Key Settings Action
                 Card(
                     colors = CardDefaults.cardColors(containerColor = MinimalSurfaceElevated),
@@ -255,6 +314,47 @@ fun SettingsDialog(
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = MinimalPrimary),
                             border = androidx.compose.foundation.BorderStroke(1.dp, MinimalPrimary.copy(alpha = 0.5f)),
                             modifier = Modifier.testTag("edit_api_keys_button")
+                        ) {
+                            Icon(Icons.Default.Key, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Edit Keys", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // OKX API Key Settings Action
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MinimalSurfaceElevated),
+                    shape = RoundedCornerShape(16.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MinimalSurfaceBorderLight)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "OKX TR API Credentials",
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 13.sp,
+                                color = MinimalTextPrimary
+                            )
+                            Text(
+                                text = "OKX TR V5 API",
+                                fontSize = 11.sp,
+                                color = MinimalTextSecondary
+                            )
+                        }
+                        OutlinedButton(
+                            onClick = onOpenOkxApiKeys,
+                            shape = RoundedCornerShape(999.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = MinimalPrimary),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, MinimalPrimary.copy(alpha = 0.5f))
                         ) {
                             Icon(Icons.Default.Key, contentDescription = null, modifier = Modifier.size(14.dp))
                             Spacer(modifier = Modifier.width(4.dp))
@@ -356,6 +456,7 @@ fun SettingsDialog(
                     Button(
                         onClick = {
                             onUpdateStepPercent(stepSlider.toDouble())
+                            onUpdateSymbols(currentBybitSymbol, currentOkxSymbol)
                             onDismiss()
                         },
                         colors = ButtonDefaults.buttonColors(

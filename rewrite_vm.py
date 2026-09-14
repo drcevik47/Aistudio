@@ -1,4 +1,9 @@
-package com.example.ui
+import urllib.request
+import os
+
+# Instead of downloading from anywhere, I'll write the clean file.
+
+content = """package com.example.ui
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
@@ -138,13 +143,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     init {
         if (preferences.isConfigured || preferences.okxApiKey.isNotBlank()) {
             if (preferences.isBotActive) {
-                try {
-                    TradingBotService.start(getApplication())
-                } catch (e: Exception) {
-                    viewModelScope.launch(Dispatchers.IO) {
-                        repository.log(LogLevel.ERROR, "System", "Bot servisi başlatılamadı: ${e.message}")
-                    }
-                }
+                TradingBotService.start(getApplication())
             }
             viewModelScope.launch(Dispatchers.IO) {
                 repository.pruneLogs()
@@ -305,13 +304,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             repository.syncServerTime()
 
             if (preferences.isBotActive) {
-                try {
-                    TradingBotService.start(getApplication())
-                } catch (e: Exception) {
-                    viewModelScope.launch(Dispatchers.IO) {
-                        repository.log(LogLevel.ERROR, "System", "Bot servisi başlatılamadı: ${e.message}")
-                    }
-                }
+                TradingBotService.start(getApplication())
                 val reconRes = repository.reconcileGridOrders(callerTag = "ManuelYenile")
                 reconRes.onSuccess { rec ->
                     if (rec.executedOrderFound) {
@@ -422,12 +415,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.update { it.copy(isLoading = true, isExecutingRebalance = true, showInitialRebalanceDialog = false) }
 
             val side = if (analysis.requiredAction == RebalanceAction.BUY_BASE) "Buy" else "Sell"
-            val qty = analysis.deltaBase
+            val qty = analysis.tradeQty
 
             val res = repository.createOrder(
+                symbol = preferences.bybitSymbol,
                 side = side,
                 orderType = "Market",
-                qty = qty,
+                qty = qty.toString(),
                 price = null
             )
 
@@ -465,13 +459,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             startRes.onSuccess {
                 preferences.isBotActive = true
                 preferences.lastRebalancePrice = _uiState.value.currentPrice
-                try {
-                    TradingBotService.start(getApplication())
-                } catch (e: Exception) {
-                    viewModelScope.launch(Dispatchers.IO) {
-                        repository.log(LogLevel.ERROR, "System", "Bot servisi başlatılamadı: ${e.message}")
-                    }
-                }
+                TradingBotService.start(getApplication())
                 repository.log(LogLevel.INFO, "System", "Bot başlatıldı. Aktif Baz Fiyat: $${RebalanceEngine.format4(preferences.lastRebalancePrice)}")
                 _uiState.update { it.copy(isBotActive = true, isLoading = false, lastRebalancePrice = preferences.lastRebalancePrice) }
                 refreshData()
@@ -701,3 +689,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 }
+"""
+
+with open("app/src/main/java/com/example/ui/MainViewModel.kt", "w") as f:
+    f.write(content)
+

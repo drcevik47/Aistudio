@@ -101,6 +101,8 @@ fun OrderHistoryScreen(
     exchangeTrades: List<ExchangeTradeEntity> = emptyList(),
     liveAnalysis: TradeAnalysisResult? = null,
     currentPrice: Double = 0.0,
+    activeSymbol: String,
+    activeBaseCoin: String,
     onClearOrders: () -> Unit,
     onClearExchangeTrades: (() -> Unit)? = null,
     onExportKlines: ((String, String, String, Long, Long, android.content.Context) -> Unit)? = null,
@@ -121,17 +123,17 @@ fun OrderHistoryScreen(
             .map { it.uppercase().trim() }
             .distinct()
             .toMutableList()
-        if (!syms.contains("MNTUSDT")) {
-            syms.add(0, "MNTUSDT")
+        if (!syms.contains(activeSymbol)) {
+            syms.add(0, activeSymbol)
         } else {
-            syms.remove("MNTUSDT")
-            syms.add(0, "MNTUSDT")
+            syms.remove(activeSymbol)
+            syms.add(0, activeSymbol)
         }
         syms
     }
 
-    // Default symbol to "MNTUSDT" (MNT coin) as requested
-    var selectedSymbol by remember { mutableStateOf("MNTUSDT") }
+    // Default symbol to activeSymbol (MNT coin) as requested
+    var selectedSymbol by remember { mutableStateOf(activeSymbol) }
     val dateFormat = remember { SimpleDateFormat("dd.MM.yyyy HH:mm:ss", Locale.getDefault()) }
 
     // Screen Analysis: calculated from database for the selected coin and date filter
@@ -151,7 +153,7 @@ fun OrderHistoryScreen(
                 true
             } else {
                 order.symbol.equals(selectedSymbol, ignoreCase = true) ||
-                        (selectedSymbol == "MNTUSDT" && order.symbol.isBlank())
+                        (selectedSymbol == activeSymbol && order.symbol.isBlank())
             }
             val filterMatch = when (selectedFilter) {
                 "BUY" -> order.side.equals("Buy", ignoreCase = true)
@@ -396,7 +398,7 @@ fun OrderHistoryScreen(
         if (screenAnalysis != null && (screenAnalysis.buyTradeCount > 0 || screenAnalysis.sellTradeCount > 0)) {
             item {
                 val fallbackPrice = screenAnalysis.executions.firstOrNull()?.priceValue ?: 0.0
-                val effectivePrice = if (screenAnalysis.symbol.contains("MNT") && currentPrice > 0.0) currentPrice else fallbackPrice
+                val effectivePrice = if (screenAnalysis.symbol.contains(activeBaseCoin + "") && currentPrice > 0.0) currentPrice else fallbackPrice
                 TradeProfitabilityCard(
                     analysis = screenAnalysis,
                     currentPrice = effectivePrice
@@ -429,7 +431,7 @@ fun OrderHistoryScreen(
                             color = MinimalTextSecondary
                         )
                         Text(
-                            text = if (selectedSymbol == "MNTUSDT") "Varsayılan (MNT)" else if (selectedSymbol == "ALL") "Tüm Pariteler" else selectedSymbol,
+                            text = if (selectedSymbol == activeSymbol) "Varsayılan (MNT)" else if (selectedSymbol == "ALL") "Tüm Pariteler" else selectedSymbol,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             color = MinimalPrimary
@@ -451,7 +453,7 @@ fun OrderHistoryScreen(
                                 shape = RoundedCornerShape(999.dp),
                                 label = {
                                     Text(
-                                        text = if (sym == "MNTUSDT") "🪙 MNT (Varsayılan)" else "🪙 $cleanName",
+                                        text = if (sym == activeSymbol) "🪙 MNT (Varsayılan)" else "🪙 $cleanName",
                                         fontSize = 12.sp,
                                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
                                     )
@@ -606,7 +608,7 @@ fun OrderHistoryScreen(
             }
         } else {
             items(filteredOrders, key = { it.id }) { order ->
-                OrderItemCard(order = order, dateFormat = dateFormat)
+                OrderItemCard(order = order, dateFormat = dateFormat, activeBaseCoin = activeBaseCoin)
             }
         }
     }
@@ -620,6 +622,7 @@ fun OrderHistoryScreen(
             activeStartDateMillis = activeFilterStartDateMillis,
             activeEndDateMillis = activeFilterEndDateMillis,
             activeSymbol = selectedSymbol,
+            activeBaseCoin = activeBaseCoin,
             onApplyFilter = { newStart, newEnd, newSym ->
                 activeFilterStartDateMillis = newStart
                 activeFilterEndDateMillis = newEnd
@@ -682,6 +685,7 @@ fun OrderHistoryScreen(
         showDialog = showKlineExportDialog,
         onDismiss = { showKlineExportDialog = false },
         selectedSymbol = selectedSymbol,
+        activeSymbol = activeSymbol,
         onExport = { symbol, interval, format, start, end, ctx ->
             onExportKlines?.invoke(symbol, interval, format, start, end, ctx)
         }
@@ -695,7 +699,8 @@ fun CalculateTradesDialog(
     currentPrice: Double,
     activeStartDateMillis: Long?,
     activeEndDateMillis: Long? = null,
-    activeSymbol: String = "MNTUSDT",
+    activeSymbol: String,
+    activeBaseCoin: String,
     onApplyFilter: (Long?, Long?, String) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -723,11 +728,11 @@ fun CalculateTradesDialog(
             .map { it.uppercase().trim() }
             .distinct()
             .toMutableList()
-        if (!syms.contains("MNTUSDT")) {
-            syms.add(0, "MNTUSDT")
+        if (!syms.contains(activeSymbol)) {
+            syms.add(0, activeSymbol)
         } else {
-            syms.remove("MNTUSDT")
-            syms.add(0, "MNTUSDT")
+            syms.remove(activeSymbol)
+            syms.add(0, activeSymbol)
         }
         syms
     }
@@ -843,7 +848,7 @@ fun CalculateTradesDialog(
                                 color = MinimalTextSecondary
                             )
                             Text(
-                                text = if (selectedSymbol == "MNTUSDT") "MNT (Varsayılan)" else if (selectedSymbol == "ALL") "Tüm Portföy" else selectedSymbol,
+                                text = if (selectedSymbol == activeSymbol) activeBaseCoin + " (Varsayılan)" else if (selectedSymbol == "ALL") "Tüm Portföy" else selectedSymbol,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MinimalPrimary
@@ -865,7 +870,7 @@ fun CalculateTradesDialog(
                                     shape = RoundedCornerShape(999.dp),
                                     label = {
                                         Text(
-                                            text = if (sym == "MNTUSDT") "🪙 MNT (Varsayılan)" else "🪙 $cleanName",
+                                            text = if (sym == activeSymbol) "🪙 MNT (Varsayılan)" else "🪙 $cleanName",
                                             fontSize = 11.sp,
                                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
                                         )
@@ -1552,6 +1557,7 @@ fun CalculateTradesDialog(
 @Composable
 private fun OrderItemCard(
     order: OrderEntity,
+    activeBaseCoin: String,
     dateFormat: SimpleDateFormat
 ) {
     val isBuy = order.side.equals("Buy", ignoreCase = true)
@@ -1565,7 +1571,7 @@ private fun OrderItemCard(
             order.symbol.uppercase()
         }
     } else {
-        "MNT/USDT"
+        activeBaseCoin + "/USDT"
     }
 
     val baseAsset = if (order.symbol.isNotBlank()) {
@@ -1575,7 +1581,7 @@ private fun OrderItemCard(
             order.symbol.uppercase()
         }
     } else {
-        "MNT"
+        activeBaseCoin + ""
     }
 
     Card(

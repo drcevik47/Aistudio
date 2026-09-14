@@ -1,4 +1,6 @@
-package com.example.service
+import urllib.request
+
+content = """package com.example.service
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -187,10 +189,8 @@ class TradingBotService : Service() {
     private suspend fun handleOrderUpdate(order: BybitOrderDto) {
         if (order.orderStatus == "Filled") {
             val orderId = order.orderId
-            val avgPrice = order.avgPrice.toDoubleOrNull() ?: 0.0
-            val fillPrice = if (avgPrice > 0.0) avgPrice else (order.priceValue)
-            val execQty = order.cumExecQty.toDoubleOrNull() ?: 0.0
-            val fillQty = if (execQty > 0.0) execQty else order.qtyValue
+            val fillPrice = if (order.avgPrice > 0) order.avgPrice else (order.price ?: 0.0)
+            val fillQty = if (order.cumExecQty > 0) order.cumExecQty else order.qtyValue
 
             repository.recordOrderFilled(
                 orderId = orderId,
@@ -198,14 +198,14 @@ class TradingBotService : Service() {
                 price = fillPrice,
                 qty = fillQty,
                 triggerReason = if (order.side.equals("Buy", ignoreCase = true)) "GridStepDownBuy" else "GridStepUpSell",
-                fillTime = order.updatedTime.toLongOrNull() ?: 0L
+                fillTime = order.updatedTime
             )
             repository.reconcileGridOrders(callerTag = "WebSocket")
 
             val notifId = ALERT_NOTIFICATION_ID_BASE + (orderId.hashCode() and 0x7FFFFFFF) % 500
             sendAlertNotification(
                 "${order.side} Limit Emri Gerçekleşti!",
-                "${order.side} ${order.cumExecQty.toDoubleOrNull() ?: 0.0} ${preferences.bybitBaseCoin} @ ${order.avgPrice.toDoubleOrNull() ?: 0.0} USDT. Karşı emir iptal edildi ve yeni ızgara kuruldu.",
+                "${order.side} ${order.cumExecQty} ${preferences.bybitBaseCoin} @ ${order.avgPrice} USDT. Karşı emir iptal edildi ve yeni ızgara kuruldu.",
                 false,
                 notificationId = notifId
             )
@@ -388,7 +388,7 @@ class TradingBotService : Service() {
                     try {
                         context.startForegroundService(intent)
                     } catch(e: Exception) {
-                        if (e is Exception && (e.javaClass.simpleName == "ForegroundServiceStartNotAllowedException" || e.message?.contains("ForegroundServiceStartNotAllowedException") == true || e.cause?.javaClass?.simpleName == "ForegroundServiceStartNotAllowedException")) {
+                        if (e is android.app.ForegroundServiceStartNotAllowedException || e.cause is android.app.ForegroundServiceStartNotAllowedException || e.message?.contains("ForegroundServiceStartNotAllowedException") == true) {
                             Log.w("TradingBotService", "Foreground service start not allowed, starting normally.")
                             context.startService(intent)
                         } else {
@@ -411,3 +411,7 @@ class TradingBotService : Service() {
         }
     }
 }
+"""
+
+with open("app/src/main/java/com/example/service/TradingBotService.kt", "w") as f:
+    f.write(content)

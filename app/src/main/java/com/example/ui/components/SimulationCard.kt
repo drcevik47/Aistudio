@@ -18,31 +18,32 @@ import com.example.ui.theme.*
 @Composable
 fun SimulationCard(
     currentUsdtBalance: Double,
-    currentMntBalance: Double,
+    currentBaseBalance: Double,
     currentBasePrice: Double,
     stepPercent: Double,
+    activeBaseCoin: String,
     modifier: Modifier = Modifier
 ) {
     var isExpanded by remember { mutableStateOf(false) }
     var simUsdtBalance by remember { mutableDoubleStateOf(currentUsdtBalance) }
-    var simMntBalance by remember { mutableDoubleStateOf(currentMntBalance) }
+    var simBaseBalance by remember { mutableDoubleStateOf(currentBaseBalance) }
     var simBasePrice by remember { mutableDoubleStateOf(currentBasePrice) }
     var simSteps by remember { mutableIntStateOf(0) }
 
     // Reset when base properties change drastically (like bot resetting)
-    LaunchedEffect(currentUsdtBalance, currentMntBalance, currentBasePrice, stepPercent) {
+    LaunchedEffect(currentUsdtBalance, currentBaseBalance, currentBasePrice, stepPercent) {
         if (!isExpanded) {
             simUsdtBalance = currentUsdtBalance
-            simMntBalance = currentMntBalance
+            simBaseBalance = currentBaseBalance
             simBasePrice = currentBasePrice
             simSteps = 0
         }
     }
 
-    val gridPlan = remember(simUsdtBalance, simMntBalance, simBasePrice, stepPercent) {
+    val gridPlan = remember(simUsdtBalance, simBaseBalance, simBasePrice, stepPercent) {
         RebalanceEngine.calculateGridOrders(
             usdtBalance = simUsdtBalance,
-            mntBalance = simMntBalance,
+            baseCoinBalance = simBaseBalance,
             basePrice = simBasePrice,
             stepPercent = stepPercent
         )
@@ -117,7 +118,7 @@ fun SimulationCard(
 
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    val simTotalUsdt = simUsdtBalance + (simMntBalance * simBasePrice)
+                    val simTotalUsdt = simUsdtBalance + (simBaseBalance * simBasePrice)
                     
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -140,8 +141,8 @@ fun SimulationCard(
                             modifier = Modifier.weight(1f)
                         ) {
                             Column(modifier = Modifier.padding(10.dp)) {
-                                Text("MNT Bakiye", fontSize = 10.sp, color = MinimalTextSecondary)
-                                Text("${RebalanceEngine.format4(simMntBalance)} MNT", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = MinimalTextPrimary)
+                                Text("Bakiye", fontSize = 10.sp, color = MinimalTextSecondary)
+                                Text("${RebalanceEngine.format4(simBaseBalance)} ${activeBaseCoin}", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = MinimalTextPrimary)
                             }
                         }
                         Spacer(modifier = Modifier.width(8.dp))
@@ -170,7 +171,7 @@ fun SimulationCard(
                             Button(
                                 onClick = {
                                     simUsdtBalance += gridPlan.sellUsdtValue
-                                    simMntBalance -= gridPlan.sellMntQty
+                                    simBaseBalance -= gridPlan.sellBaseQty
                                     simBasePrice = gridPlan.sellLimitPrice
                                     simSteps++
                                 },
@@ -196,7 +197,7 @@ fun SimulationCard(
                             Button(
                                 onClick = {
                                     simUsdtBalance -= gridPlan.buyUsdtValue
-                                    simMntBalance += gridPlan.buyMntQty
+                                    simBaseBalance += gridPlan.buyBaseQty
                                     simBasePrice = gridPlan.buyLimitPrice
                                     simSteps++
                                 },
@@ -222,30 +223,30 @@ fun SimulationCard(
                         Button(
                             onClick = {
                                 var tempUsdt = simUsdtBalance
-                                var tempMnt = simMntBalance
+                                var tempBase = simBaseBalance
                                 var tempBasePrice = simBasePrice
                                 var validSteps = 0
 
                                 for (i in 1..100) {
-                                    val plan = RebalanceEngine.calculateGridOrders(tempUsdt, tempMnt, tempBasePrice, stepPercent)
+                                    val plan = RebalanceEngine.calculateGridOrders(tempUsdt, tempBase, tempBasePrice, stepPercent)
                                     if (!plan.isValid) break
 
                                     if (i % 2 != 0) {
                                         // Odd step: Up (Sell)
                                         tempUsdt += plan.sellUsdtValue
-                                        tempMnt -= plan.sellMntQty
+                                        tempBase -= plan.sellBaseQty
                                         tempBasePrice = plan.sellLimitPrice
                                     } else {
                                         // Even step: Down (Buy)
                                         tempUsdt -= plan.buyUsdtValue
-                                        tempMnt += plan.buyMntQty
+                                        tempBase += plan.buyBaseQty
                                         tempBasePrice = plan.buyLimitPrice
                                     }
                                     validSteps++
                                 }
 
                                 simUsdtBalance = tempUsdt
-                                simMntBalance = tempMnt
+                                simBaseBalance = tempBase
                                 simBasePrice = tempBasePrice
                                 simSteps += validSteps
                             },
@@ -267,7 +268,7 @@ fun SimulationCard(
                         TextButton(
                             onClick = {
                                 simUsdtBalance = currentUsdtBalance
-                                simMntBalance = currentMntBalance
+                                simBaseBalance = currentBaseBalance
                                 simBasePrice = currentBasePrice
                                 simSteps = 0
                             },

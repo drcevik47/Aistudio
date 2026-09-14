@@ -108,6 +108,8 @@ fun TradeAnalysisScreen(
     state: TradeAnalysisUiState,
     isApiConfigured: Boolean,
     currentPrice: Double = 0.0,
+    activeBaseCoin: String,
+    activeSymbol: String,
     onFetchAnalysis: (symbol: String?, daysBack: Int, startTimestamp: Long?) -> Unit,
     onClearLocalDatabase: (() -> Unit)? = null,
     modifier: Modifier = Modifier
@@ -115,26 +117,26 @@ fun TradeAnalysisScreen(
     var selectedFilter by remember { mutableStateOf("ALL") } // "ALL", "BUY", "SELL"
     var selectedDaysBack by remember { mutableStateOf(730) } // Default 730 days (2 years - Bybit API maximum)
     var selectedStartDateMillis by remember { mutableStateOf<Long?>(null) } // Custom start date chosen by user
-    var selectedSymbolOption by remember { mutableStateOf("MNTUSDT") } // "MNTUSDT", "ALL", "CUSTOM"
+    var selectedSymbolOption by remember { mutableStateOf(activeSymbol) } // activeSymbol, "ALL", "CUSTOM"
     var customSymbolText by remember { mutableStateOf("") }
     var showClearDialog by remember { mutableStateOf(false) }
 
     val triggerFetch = {
         val symbol = when (selectedSymbolOption) {
             "ALL" -> null
-            "CUSTOM" -> customSymbolText.trim().ifBlank { "MNTUSDT" }
-            else -> "MNTUSDT"
+            "CUSTOM" -> customSymbolText.trim().ifBlank { activeSymbol }
+            else -> activeSymbol
         }
         onFetchAnalysis(symbol, selectedDaysBack, selectedStartDateMillis)
     }
 
     val analysis = state.analysis
 
-    // If analysis is multi-symbol, default to MNTUSDT if present, otherwise ALL
+    // If analysis is multi-symbol, default to activeSymbol if present, otherwise ALL
     var selectedBreakdownSymbol by remember(analysis) {
         mutableStateOf<String?>(
             if (analysis != null && analysis.isMultiSymbol && analysis.symbolBreakdown.isNotEmpty()) {
-                if (analysis.symbolBreakdown.containsKey("MNTUSDT")) "MNTUSDT" else "ALL"
+                if (analysis.symbolBreakdown.containsKey(activeSymbol)) activeSymbol else "ALL"
             } else null
         )
     }
@@ -170,6 +172,8 @@ fun TradeAnalysisScreen(
                 lastFetchedAt = state.lastFetchedAt,
                 selectedDaysBack = selectedDaysBack,
                 onDaysBackChange = { selectedDaysBack = it },
+                activeBaseCoin = activeBaseCoin,
+                activeSymbol = activeSymbol,
                 selectedStartDateMillis = selectedStartDateMillis,
                 onStartDateChange = { selectedStartDateMillis = it },
                 selectedSymbolOption = selectedSymbolOption,
@@ -388,9 +392,9 @@ fun TradeAnalysisScreen(
                                     .horizontalScroll(rememberScrollState()),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                // MNTUSDT first, then other coins
+                                // activeSymbol first, then other coins
                                 val sortedKeys = analysis.symbolBreakdown.keys.sortedWith(Comparator { a, b ->
-                                    if (a == "MNTUSDT") -1 else if (b == "MNTUSDT") 1 else a.compareTo(b)
+                                    if (a == activeSymbol) -1 else if (b == activeSymbol) 1 else a.compareTo(b)
                                 })
 
                                 sortedKeys.forEach { sym ->
@@ -405,7 +409,7 @@ fun TradeAnalysisScreen(
                                         shape = RoundedCornerShape(999.dp),
                                         label = {
                                             Text(
-                                                text = if (sym == "MNTUSDT") "🪙 MNT (Varsayılan - $coinTradeCount)" else "🪙 $cleanName ($coinTradeCount)",
+                                                text = if (sym == activeSymbol) "🪙 MNT (Varsayılan - $coinTradeCount)" else "🪙 $cleanName ($coinTradeCount)",
                                                 fontSize = 11.sp,
                                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
                                             )
@@ -465,7 +469,7 @@ fun TradeAnalysisScreen(
             item {
                 val currentData = displayAnalysis ?: analysis
                 val fallbackPrice = currentData.executions.firstOrNull()?.priceValue ?: 0.0
-                val effectivePrice = if (currentData.symbol.contains("MNT") && currentPrice > 0.0) currentPrice else fallbackPrice
+                val effectivePrice = if (currentData.symbol.contains(activeBaseCoin + "") && currentPrice > 0.0) currentPrice else fallbackPrice
                 TradeProfitabilityCard(
                     analysis = currentData,
                     currentPrice = effectivePrice
@@ -478,7 +482,9 @@ fun TradeAnalysisScreen(
                     CoinBreakdownOverviewSection(
                         symbolBreakdowns = analysis.symbolBreakdownsList,
                         selectedSymbol = selectedBreakdownSymbol,
-                        onSelectSymbol = { selectedBreakdownSymbol = it }
+                        onSelectSymbol = { selectedBreakdownSymbol = it },
+                        activeBaseCoin = activeBaseCoin,
+                        activeSymbol = activeSymbol,
                     )
                 }
             }
@@ -564,7 +570,7 @@ fun TradeAnalysisScreen(
                 }
             } else {
                 items(filteredExecutions, key = { it.execId.ifBlank { "${it.orderId}_${it.execTime}_${it.execQty}_${it.execPrice}" } }) { exec ->
-                    ExecutionItemCard(exec = exec)
+                    ExecutionItemCard(exec = exec, activeBaseCoin = activeBaseCoin)
                 }
             }
         } else {
@@ -638,6 +644,8 @@ private fun TradeAnalysisHeaderCard(
     selectedStartDateMillis: Long? = null,
     onStartDateChange: (Long?) -> Unit = {},
     selectedSymbolOption: String,
+    activeBaseCoin: String,
+    activeSymbol: String,
     onSymbolOptionChange: (String) -> Unit,
     customSymbolText: String,
     onCustomSymbolTextChange: (String) -> Unit,
@@ -925,8 +933,8 @@ private fun TradeAnalysisHeaderCard(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            val symbolOptions = listOf(
-                "MNTUSDT" to "MNT/USDT (Bot)",
+            val symbolOptions = listOf<Pair<String, String>>(
+                activeSymbol to activeBaseCoin + "/USDT (Bot)",
                 "ALL" to "Tüm Spot (Sembolsüz)",
                 "CUSTOM" to "Diğer Sembol"
             )
@@ -1142,6 +1150,8 @@ private fun TradeAnalysisHeaderCard(
 fun CoinBreakdownOverviewSection(
     symbolBreakdowns: List<TradeAnalysisResult>,
     selectedSymbol: String?,
+    activeBaseCoin: String,
+    activeSymbol: String,
     onSelectSymbol: (String) -> Unit
 ) {
     Card(
@@ -1235,7 +1245,7 @@ fun CoinBreakdownOverviewSection(
                                         fontSize = 14.sp,
                                         color = MinimalTextPrimary
                                     )
-                                    if (item.symbol == "MNTUSDT") {
+                                    if (item.symbol == activeSymbol) {
                                         Spacer(modifier = Modifier.width(6.dp))
                                         Surface(
                                             shape = RoundedCornerShape(999.dp),
@@ -2271,7 +2281,7 @@ fun TradeProfitabilityCard(
 }
 
 @Composable
-private fun ExecutionItemCard(exec: BybitExecutionDto) {
+private fun ExecutionItemCard(exec: BybitExecutionDto, activeBaseCoin: String) {
     val isBuy = exec.isBuy
     val sideColor = if (isBuy) MinimalSuccessDark else MinimalErrorDark
     val sideBg = if (isBuy) MinimalSuccessLight else MinimalErrorLight
@@ -2363,7 +2373,7 @@ private fun ExecutionItemCard(exec: BybitExecutionDto) {
                 } else if (exec.symbol.isNotBlank()) {
                     exec.symbol
                 } else {
-                    "MNT"
+                    activeBaseCoin + ""
                 }
 
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {

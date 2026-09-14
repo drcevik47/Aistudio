@@ -14,6 +14,7 @@ enum class LogLevel {
 data class LogEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
+    val exchange: String = "BYBIT",
     val timestamp: Long = System.currentTimeMillis(),
     val level: String, // INFO, SUCCESS, WARN, ERROR
     val tag: String,

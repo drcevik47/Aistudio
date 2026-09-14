@@ -7,6 +7,7 @@ import androidx.room.PrimaryKey
 data class OrderEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
+    val exchange: String = "BYBIT",
     val orderId: String,
     val orderLinkId: String = "",
     val symbol: String = "MNTUSDT",

@@ -274,11 +274,11 @@ class BybitRepository(
         }
     }
 
-    suspend fun getMntTicker(isTestnet: Boolean = preferences.isTestnet): Result<SpotTicker> =
+    suspend fun getTicker(isTestnet: Boolean = preferences.isTestnet): Result<SpotTicker> =
         withContext(Dispatchers.IO) {
             try {
                 val api = createApiService(isTestnet)
-                val response = api.getTickers("spot", "MNTUSDT")
+                val response = api.getTickers("spot", preferences.bybitSymbol)
                 if (response.isSuccessful) {
                     val body = response.body()
                     val ticker = body?.result?.list?.firstOrNull()
@@ -322,7 +322,7 @@ class BybitRepository(
             // Construct exact JSON payload
             val jsonObject = JSONObject().apply {
                 put("category", "spot")
-                put("symbol", "MNTUSDT")
+                put("symbol", preferences.bybitSymbol)
                 put("side", side)
                 put("orderType", orderType)
                 put("qty", formattedQty)
@@ -353,7 +353,7 @@ class BybitRepository(
                     val orderEntity = OrderEntity(
                         orderId = orderId,
                         orderLinkId = orderLinkId,
-                        symbol = "MNTUSDT",
+                        symbol = preferences.bybitSymbol,
                         side = side,
                         orderType = orderType,
                         price = price ?: 0.0,
@@ -403,7 +403,7 @@ class BybitRepository(
 
             val jsonObject = JSONObject().apply {
                 put("category", "spot")
-                put("symbol", "MNTUSDT")
+                put("symbol", preferences.bybitSymbol)
                 put("orderId", orderId)
             }
             val jsonString = jsonObject.toString()
@@ -442,7 +442,7 @@ class BybitRepository(
         }
     }
 
-    suspend fun cancelAllMntOrders(
+    suspend fun cancelAllBaseOrders(
         apiKey: String = preferences.apiKey,
         apiSecret: String = preferences.apiSecret,
         isTestnet: Boolean = preferences.isTestnet
@@ -454,7 +454,7 @@ class BybitRepository(
 
             val jsonObject = JSONObject().apply {
                 put("category", "spot")
-                put("symbol", "MNTUSDT")
+                put("symbol", preferences.bybitSymbol)
             }
             val jsonString = jsonObject.toString()
             val headers = createAuthHeaders(apiKey, apiSecret, jsonString)
@@ -466,7 +466,7 @@ class BybitRepository(
                 orderDao.deleteUnfilledOrders()
                 preferences.activeBuyOrderId = ""
                 preferences.activeSellOrderId = ""
-                log(LogLevel.INFO, "CancelAll", "Tüm açık MNTUSDT emirleri iptal edildi ve geçmişten temizlendi")
+                log(LogLevel.INFO, "CancelAll", "Tüm açık symbol emirleri iptal edildi ve geçmişten temizlendi")
                 Result.success(true)
             } else {
                 val code = response.body()?.retCode ?: -1
@@ -489,7 +489,7 @@ class BybitRepository(
     suspend fun getOrderHistory(
         orderId: String,
         category: String = "spot",
-        symbol: String = "MNTUSDT",
+        symbol: String = preferences.bybitSymbol,
         apiKey: String = preferences.apiKey,
         apiSecret: String = preferences.apiSecret,
         isTestnet: Boolean = preferences.isTestnet
@@ -528,10 +528,10 @@ class BybitRepository(
             }
 
             val api = createApiService(isTestnet)
-            val queryString = "category=spot&symbol=MNTUSDT"
+            val queryString = "category=spot&symbol=${preferences.bybitSymbol}"
             val headers = createAuthHeaders(apiKey, apiSecret, queryString)
 
-            val response = api.getOpenOrders(headers, "spot", "MNTUSDT")
+            val response = api.getOpenOrders(headers, "spot", preferences.bybitSymbol)
             if (response.isSuccessful && response.body()?.isSuccess == true) {
                 Result.success(response.body()?.result?.list ?: emptyList())
             } else {
@@ -546,7 +546,7 @@ class BybitRepository(
 
     suspend fun getRecentOrdersList(
         category: String = "spot",
-        symbol: String = "MNTUSDT",
+        symbol: String = preferences.bybitSymbol,
         limit: Int = 20,
         apiKey: String = preferences.apiKey,
         apiSecret: String = preferences.apiSecret,
@@ -580,7 +580,7 @@ class BybitRepository(
 
     suspend fun getRecentExecutionsList(
         category: String = "spot",
-        symbol: String = "MNTUSDT",
+        symbol: String = preferences.bybitSymbol,
         limit: Int = 20,
         apiKey: String = preferences.apiKey,
         apiSecret: String = preferences.apiSecret,
@@ -723,7 +723,7 @@ class BybitRepository(
 
                 val lastBase = preferences.lastRebalancePrice
                 val step = preferences.stepPercent
-                val currentTickerPrice = getMntTicker().getOrNull()?.currentPrice ?: 0.0
+                val currentTickerPrice = getTicker().getOrNull()?.currentPrice ?: 0.0
 
                 if (isCancelledWithoutFill) {
                     log(
@@ -802,13 +802,13 @@ class BybitRepository(
                 val balanceRes = getWalletBalance()
                 balanceRes.onSuccess { map ->
                     usdt = map["USDT"] ?: 0.0
-                    mnt = map["MNT"] ?: 0.0
+                    mnt = map["${preferences.bybitBaseCoin}"] ?: 0.0
                 }
 
                 if (usdt > 0.0 && mnt > 0.0 && finalExecPrice > 0.0) {
                     val plan = RebalanceEngine.calculateGridOrders(
                         usdtBalance = usdt,
-                        mntBalance = mnt,
+                        baseCoinBalance = mnt,
                         basePrice = finalExecPrice,
                         stepPercent = step
                     )
@@ -818,7 +818,7 @@ class BybitRepository(
                         val sellRes = createOrder(
                             side = "Sell",
                             orderType = "Limit",
-                            qty = plan.sellMntQty,
+                            qty = plan.sellBaseQty,
                             price = plan.sellLimitPrice,
                             triggerReason = "GridStepUpSell"
                         )
@@ -831,7 +831,7 @@ class BybitRepository(
                         val buyRes = createOrder(
                             side = "Buy",
                             orderType = "Limit",
-                            qty = plan.buyMntQty,
+                            qty = plan.buyBaseQty,
                             price = plan.buyLimitPrice,
                             triggerReason = "GridStepDownBuy"
                         )
@@ -896,7 +896,7 @@ class BybitRepository(
                 val latestFilled = if (isCancelledOnly) null else recentOrders.firstOrNull { it.isFilled || it.filledQtyValue > 0.0 }
                 val latestExec = if (isCancelledOnly) null else recentExecutions.firstOrNull()
 
-                val tickerPrice = getMntTicker().getOrNull()?.currentPrice ?: 0.0
+                val tickerPrice = getTicker().getOrNull()?.currentPrice ?: 0.0
 
                 // Use stored base price first to prevent overwriting user-configured base prices
                 val basePrice = if (preferences.lastRebalancePrice > 0.0) {
@@ -936,21 +936,21 @@ class BybitRepository(
                 var mnt = 0.0
                 getWalletBalance().onSuccess { map ->
                     usdt = map["USDT"] ?: 0.0
-                    mnt = map["MNT"] ?: 0.0
+                    mnt = map["${preferences.bybitBaseCoin}"] ?: 0.0
                 }
 
                 if (usdt > 0.0 && mnt > 0.0) {
                     val plan = RebalanceEngine.calculateGridOrders(
                             usdtBalance = usdt,
-                            mntBalance = mnt,
+                            baseCoinBalance = mnt,
                             basePrice = basePrice,
                             stepPercent = preferences.stepPercent
                         )
                         if (plan.isValid) {
-                            val sellRes = createOrder("Sell", "Limit", plan.sellMntQty, plan.sellLimitPrice, "GridStepUpSell")
+                            val sellRes = createOrder("Sell", "Limit", plan.sellBaseQty, plan.sellLimitPrice, "GridStepUpSell")
                             sellRes.onSuccess { preferences.activeSellOrderId = it }
 
-                            val buyRes = createOrder("Buy", "Limit", plan.buyMntQty, plan.buyLimitPrice, "GridStepDownBuy")
+                            val buyRes = createOrder("Buy", "Limit", plan.buyBaseQty, plan.buyLimitPrice, "GridStepDownBuy")
                             buyRes.onSuccess { preferences.activeBuyOrderId = it }
 
                             lastGridOrderPlacedTimeMs = System.currentTimeMillis()
@@ -1059,7 +1059,7 @@ class BybitRepository(
                 if (preferences.isBotActive) {
                     // 1. Cancel all open MNT orders on Bybit
                     log(LogLevel.INFO, "BasePrice", "Eski açık emirler iptal ediliyor...")
-                    cancelAllMntOrders()
+                    cancelAllBaseOrders()
                     preferences.activeBuyOrderId = ""
                     preferences.activeSellOrderId = ""
 
@@ -1070,7 +1070,7 @@ class BybitRepository(
                     var mnt = 0.0
                     getWalletBalance().onSuccess { map ->
                         usdt = map["USDT"] ?: 0.0
-                        mnt = map["MNT"] ?: 0.0
+                        mnt = map["${preferences.bybitBaseCoin}"] ?: 0.0
                     }
 
                     if (usdt <= 0.0 && mnt <= 0.0) {
@@ -1080,7 +1080,7 @@ class BybitRepository(
                     // 3. Calculate grid with the EXACT new base price
                     val plan = RebalanceEngine.calculateGridOrders(
                         usdtBalance = usdt,
-                        mntBalance = mnt,
+                        baseCoinBalance = mnt,
                         basePrice = newPrice,
                         stepPercent = preferences.stepPercent
                     )
@@ -1091,10 +1091,10 @@ class BybitRepository(
                     }
 
                     // 4. Place new orders on Bybit
-                    val sellRes = createOrder("Sell", "Limit", plan.sellMntQty, plan.sellLimitPrice, "ManualBasePriceUpdate")
+                    val sellRes = createOrder("Sell", "Limit", plan.sellBaseQty, plan.sellLimitPrice, "ManualBasePriceUpdate")
                     sellRes.onSuccess { preferences.activeSellOrderId = it }
 
-                    val buyRes = createOrder("Buy", "Limit", plan.buyMntQty, plan.buyLimitPrice, "ManualBasePriceUpdate")
+                    val buyRes = createOrder("Buy", "Limit", plan.buyBaseQty, plan.buyLimitPrice, "ManualBasePriceUpdate")
                     buyRes.onSuccess { preferences.activeBuyOrderId = it }
 
                     lastGridOrderPlacedTimeMs = System.currentTimeMillis()
@@ -1168,7 +1168,7 @@ class BybitRepository(
     }
 
     suspend fun fetchAllExecutions(
-        symbol: String? = "MNTUSDT",
+        symbol: String? = preferences.bybitSymbol,
         daysBack: Int = 730,
         startTimestamp: Long? = null,
         apiKey: String = preferences.apiKey,
@@ -1328,7 +1328,7 @@ class BybitRepository(
     }
 
     suspend fun fetchFilledOrderHistory(
-        symbol: String? = "MNTUSDT",
+        symbol: String? = preferences.bybitSymbol,
         daysBack: Int = 730,
         startTimestamp: Long? = null,
         apiKey: String = preferences.apiKey,
@@ -1425,7 +1425,7 @@ class BybitRepository(
     }
 
     suspend fun fetchTradeAnalysis(
-        symbol: String? = "MNTUSDT",
+        symbol: String? = preferences.bybitSymbol,
         daysBack: Int = 730,
         startTimestamp: Long? = null,
         apiKey: String = preferences.apiKey,
@@ -1550,7 +1550,7 @@ class BybitRepository(
                         ExchangeTradeEntity(
                             execId = execId,
                             orderId = orderId,
-                            symbol = "MNTUSDT",
+                            symbol = preferences.bybitSymbol,
                             side = side,
                             orderPrice = execPrice,
                             orderQty = execQty,
@@ -1700,7 +1700,7 @@ class BybitRepository(
      * Ardından güncel tüm veriler üzerinden analiz ve senkronizasyon raporu döndürür.
      */
     suspend fun syncTradesFromExchange(
-        symbol: String? = "MNTUSDT",
+        symbol: String? = preferences.bybitSymbol,
         daysBack: Int = 730,
         startTimestamp: Long? = null,
         apiKey: String = preferences.apiKey,
@@ -1747,7 +1747,7 @@ class BybitRepository(
                     val effectiveSymbol = if (exec.symbol.isNotBlank()) {
                         exec.symbol.trim().uppercase()
                     } else {
-                        (symbol?.takeIf { !it.equals("ALL", ignoreCase = true) && !it.equals("TÜM", ignoreCase = true) } ?: "MNTUSDT").trim().uppercase()
+                        (symbol?.takeIf { !it.equals("ALL", ignoreCase = true) && !it.equals("TÜM", ignoreCase = true) } ?: preferences.bybitSymbol).trim().uppercase()
                     }
                     ExchangeTradeEntity(
                         execId = uniqueKey,

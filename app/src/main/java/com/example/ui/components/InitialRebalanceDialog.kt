@@ -63,12 +63,13 @@ import com.example.ui.theme.MinimalTextSecondary
 @Composable
 fun InitialRebalanceDialog(
     analysis: PortfolioAnalysis,
+    baseCoin: String = "MNT",
     isExecuting: Boolean,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    val isBuy = analysis.requiredAction == RebalanceAction.BUY_MNT
-    val actionText = if (isBuy) "MNT Buy" else "MNT Sell"
+    val isBuy = analysis.requiredAction == RebalanceAction.BUY_BASE
+    val actionText = if (isBuy) "Base Buy" else "Base Sell"
     val actionColor = if (isBuy) MinimalSuccessDark else MinimalError
     val actionBg = if (isBuy) MinimalSuccessLight else MinimalErrorLight
 
@@ -156,7 +157,7 @@ fun InitialRebalanceDialog(
                                 color = MinimalTextPrimary
                             )
                             Text(
-                                text = "MNT: ${RebalanceEngine.format2(analysis.mntPercent)}% ($${RebalanceEngine.format2(analysis.mntValueUsdt)})",
+                                text = "${baseCoin}: ${RebalanceEngine.format2(analysis.basePercent)}% ($${RebalanceEngine.format2(analysis.baseValueUsdt)})",
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = MinimalTextPrimary
@@ -207,7 +208,7 @@ fun InitialRebalanceDialog(
                         ) {
                             Text("Trade Amount:", fontSize = 12.sp, color = MinimalTextSecondary)
                             Text(
-                                text = "${RebalanceEngine.format4(analysis.deltaMnt)} MNT",
+                                text = "${RebalanceEngine.format4(analysis.deltaBase)} $baseCoin",
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MinimalTextPrimary
@@ -239,7 +240,7 @@ fun InitialRebalanceDialog(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text("Current MNT Price:", fontSize = 12.sp, color = MinimalTextSecondary)
+                            Text("Current ${baseCoin} Price:", fontSize = 12.sp, color = MinimalTextSecondary)
                             Text(
                                 text = "$${RebalanceEngine.format4(analysis.currentPrice)}",
                                 fontSize = 13.sp,
@@ -268,7 +269,7 @@ fun InitialRebalanceDialog(
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "USDT: ~$${RebalanceEngine.format2(halfValue)} (50.00%)\nMNT: ~$${RebalanceEngine.format2(halfValue)} (50.00%)",
+                            text = "USDT: ~$${RebalanceEngine.format2(halfValue)} (50.00%)\n${baseCoin}: ~$${RebalanceEngine.format2(halfValue)} (50.00%)",
                             fontSize = 12.sp,
                             color = MinimalTextPrimary,
                             lineHeight = 16.sp

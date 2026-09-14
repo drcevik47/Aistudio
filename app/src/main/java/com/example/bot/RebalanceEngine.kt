@@ -11,40 +11,40 @@ import kotlin.math.abs
 
 data class PortfolioAnalysis(
     val usdtBalance: Double,
-    val mntBalance: Double,
+    val baseCoinBalance: Double,
     val currentPrice: Double,
-    val mntValueUsdt: Double,
+    val baseValueUsdt: Double,
     val totalEquityUsdt: Double,
     val usdtPercent: Double,
-    val mntPercent: Double,
+    val basePercent: Double,
     val isBalanced5050: Boolean,
     val requiredAction: RebalanceAction,
-    val deltaMnt: Double,
+    val deltaBase: Double,
     val deltaUsdt: Double,
     val description: String
 )
 
 enum class RebalanceAction {
     BALANCED,
-    BUY_MNT,
-    SELL_MNT
+    BUY_BASE,
+    SELL_BASE
 }
 
 data class GridOrdersPlan(
     val basePrice: Double,
     val stepPercent: Double,
     val sellLimitPrice: Double,
-    val sellMntQty: Double,
+    val sellBaseQty: Double,
     val sellUsdtValue: Double,
     val buyLimitPrice: Double,
-    val buyMntQty: Double,
+    val buyBaseQty: Double,
     val buyUsdtValue: Double,
     val isValid: Boolean,
     val validationMessage: String = "",
     val postSellUsdt: Double = 0.0,
-    val postSellMntValue: Double = 0.0,
+    val postSellBaseValue: Double = 0.0,
     val postBuyUsdt: Double = 0.0,
-    val postBuyMntValue: Double = 0.0
+    val postBuyBaseValue: Double = 0.0
 )
 
 object RebalanceEngine {
@@ -54,84 +54,84 @@ object RebalanceEngine {
      */
     fun analyzePortfolio(
         usdtBalance: Double,
-        mntBalance: Double,
+        baseCoinBalance: Double,
         currentPrice: Double,
         tolerancePercent: Double = 0.8 // 49.2% - 50.8% considered balanced
     ): PortfolioAnalysis {
         if (currentPrice <= 0.0) {
             return PortfolioAnalysis(
                 usdtBalance = usdtBalance,
-                mntBalance = mntBalance,
+                baseCoinBalance = baseCoinBalance,
                 currentPrice = currentPrice,
-                mntValueUsdt = 0.0,
+                baseValueUsdt = 0.0,
                 totalEquityUsdt = usdtBalance,
                 usdtPercent = 100.0,
-                mntPercent = 0.0,
+                basePercent = 0.0,
                 isBalanced5050 = false,
                 requiredAction = RebalanceAction.BALANCED,
-                deltaMnt = 0.0,
+                deltaBase = 0.0,
                 deltaUsdt = 0.0,
                 description = "Fiyat bilgisi bekleniyor"
             )
         }
 
-        val mntValueUsdt = mntBalance * currentPrice
-        val totalEquity = usdtBalance + mntValueUsdt
+        val baseValueUsdt = baseCoinBalance * currentPrice
+        val totalEquity = usdtBalance + baseValueUsdt
 
         if (totalEquity <= 0.0) {
             return PortfolioAnalysis(
                 usdtBalance = 0.0,
-                mntBalance = 0.0,
+                baseCoinBalance = 0.0,
                 currentPrice = currentPrice,
-                mntValueUsdt = 0.0,
+                baseValueUsdt = 0.0,
                 totalEquityUsdt = 0.0,
                 usdtPercent = 0.0,
-                mntPercent = 0.0,
+                basePercent = 0.0,
                 isBalanced5050 = true,
                 requiredAction = RebalanceAction.BALANCED,
-                deltaMnt = 0.0,
+                deltaBase = 0.0,
                 deltaUsdt = 0.0,
-                description = "Hesapta USDT veya MNT bakiyesi bulunamadı"
+                description = "Hesapta USDT veya BASE bakiyesi bulunamadı"
             )
         }
 
         val usdtPercent = (usdtBalance / totalEquity) * 100.0
-        val mntPercent = (mntValueUsdt / totalEquity) * 100.0
+        val basePercent = (baseValueUsdt / totalEquity) * 100.0
 
         val targetEquityHalf = totalEquity * 0.5
-        val targetMnt = targetEquityHalf / currentPrice
+        val targetBaseQty = targetEquityHalf / currentPrice
 
-        // deltaMnt = targetMnt - currentMnt = (usdtBalance - mntValueUsdt) / (2 * currentPrice)
-        val rawDeltaMnt = targetMnt - mntBalance
-        val deltaMntAbs = abs(rawDeltaMnt)
-        val deltaUsdt = deltaMntAbs * currentPrice
+        // deltaBase = targetBaseQty - currentBase = (usdtBalance - baseValueUsdt) / (2 * currentPrice)
+        val rawDeltaBase = targetBaseQty - baseCoinBalance
+        val deltaBaseAbs = abs(rawDeltaBase)
+        val deltaUsdt = deltaBaseAbs * currentPrice
 
         val diffFrom50 = abs(usdtPercent - 50.0)
         val isBalanced = diffFrom50 <= tolerancePercent || deltaUsdt < 5.0
 
         val (action, desc) = when {
             isBalanced -> {
-                RebalanceAction.BALANCED to "Portföy dengeli (%${format2(usdtPercent)} USDT / %${format2(mntPercent)} MNT)"
+                RebalanceAction.BALANCED to "Portföy dengeli (%${format2(usdtPercent)} USDT / %${format2(basePercent)} BASE)"
             }
-            rawDeltaMnt > 0 -> {
-                RebalanceAction.BUY_MNT to "USDT fazlalığı var. %50 eşitlemek için ${format2(deltaMntAbs)} MNT alınmalı (~${format2(deltaUsdt)} USDT harcanacak)"
+            rawDeltaBase > 0 -> {
+                RebalanceAction.BUY_BASE to "USDT fazlalığı var. %50 eşitlemek için ${format2(deltaBaseAbs)} BASE alınmalı (~${format2(deltaUsdt)} USDT harcanacak)"
             }
             else -> {
-                RebalanceAction.SELL_MNT to "MNT fazlalığı var. %50 eşitlemek için ${format2(deltaMntAbs)} MNT satılmalı (~${format2(deltaUsdt)} USDT alınacak)"
+                RebalanceAction.SELL_BASE to "BASE fazlalığı var. %50 eşitlemek için ${format2(deltaBaseAbs)} BASE satılmalı (~${format2(deltaUsdt)} USDT alınacak)"
             }
         }
 
         return PortfolioAnalysis(
             usdtBalance = usdtBalance,
-            mntBalance = mntBalance,
+            baseCoinBalance = baseCoinBalance,
             currentPrice = currentPrice,
-            mntValueUsdt = mntValueUsdt,
+            baseValueUsdt = baseValueUsdt,
             totalEquityUsdt = totalEquity,
             usdtPercent = usdtPercent,
-            mntPercent = mntPercent,
+            basePercent = basePercent,
             isBalanced5050 = isBalanced,
             requiredAction = action,
-            deltaMnt = deltaMntAbs,
+            deltaBase = deltaBaseAbs,
             deltaUsdt = deltaUsdt,
             description = desc
         )
@@ -142,38 +142,38 @@ object RebalanceEngine {
      *
      * Mathematical Derivation:
      * Consider current balanced equity at basePrice:
-     *   E_0 = usdtBalance + mntBalance * basePrice
+     *   E_0 = usdtBalance + baseCoinBalance * basePrice
      * Target half equity = E_0 / 2
      *
      * When price moves by stepRatio (+s for sell, -s for buy):
      * - At sellPrice = basePrice * (1 + s):
-     *   The portfolio's total equity becomes E_sell = usdtBalance + mntBalance * sellPrice
+     *   The portfolio's total equity becomes E_sell = usdtBalance + baseCoinBalance * sellPrice
      *   The target 50% USDT is Target_USDT = E_sell / 2
-     *   To reach this target, we must sell enough MNT so that resulting USDT equals Target_USDT:
+     *   To reach this target, we must sell enough BASE so that resulting USDT equals Target_USDT:
      *     usdtBalance + sellQty * sellPrice = E_sell / 2
      *     => sellQty * sellPrice = E_sell / 2 - usdtBalance
-     *   If the base portfolio is 50/50 (usdtBalance == mntBalance * basePrice == E_0 / 2):
+     *   If the base portfolio is 50/50 (usdtBalance == baseCoinBalance * basePrice == E_0 / 2):
      *     sellUsdtValue = (E_0 / 2) * (s / (2 + s)) ≈ (E_0 / 4) * s
      *   For general portfolios, we compute the target 50% rebalance amount at the trigger step:
-     *     targetUsdtTrade = (mntBalance * basePrice * stepRatio) / 2
-     *     sellMntQty = targetUsdtTrade / sellPrice
-     *     buyMntQty = targetUsdtTrade / buyPrice
+     *     targetUsdtTrade = (baseCoinBalance * basePrice * stepRatio) / 2
+     *     sellBaseQty = targetUsdtTrade / sellPrice
+     *     buyBaseQty = targetUsdtTrade / buyPrice
      */
     fun calculateGridOrders(
         usdtBalance: Double,
-        mntBalance: Double,
+        baseCoinBalance: Double,
         basePrice: Double,
         stepPercent: Double = 2.0
     ): GridOrdersPlan {
-        if (basePrice <= 0.0 || usdtBalance <= 0.0 || mntBalance <= 0.0) {
+        if (basePrice <= 0.0 || usdtBalance <= 0.0 || baseCoinBalance <= 0.0) {
             return GridOrdersPlan(
                 basePrice = basePrice,
                 stepPercent = stepPercent,
                 sellLimitPrice = 0.0,
-                sellMntQty = 0.0,
+                sellBaseQty = 0.0,
                 sellUsdtValue = 0.0,
                 buyLimitPrice = 0.0,
-                buyMntQty = 0.0,
+                buyBaseQty = 0.0,
                 buyUsdtValue = 0.0,
                 isValid = false,
                 validationMessage = "Yetersiz bakiye veya geçersiz fiyat"
@@ -185,7 +185,7 @@ object RebalanceEngine {
         val buyPrice = basePrice * (1.0 - stepRatio)
 
         // Calculate total equity evaluated at the base price
-        val totalEquityAtBase = usdtBalance + (mntBalance * basePrice)
+        val totalEquityAtBase = usdtBalance + (baseCoinBalance * basePrice)
         val halfEquityAtBase = totalEquityAtBase / 2.0
 
         // In a 50/50 grid, when price moves by stepRatio (e.g. 2%),
@@ -196,58 +196,58 @@ object RebalanceEngine {
         val minUsdtAmt = 5.0
 
         // 1. SELL LIMIT ORDER (+stepPercent)
-        // Sell targetUsdtTrade worth of MNT at sellPrice
-        var sellMntQty = targetUsdtTrade / sellPrice
-        sellMntQty = kotlin.math.floor(sellMntQty * 100.0) / 100.0
-        if (sellMntQty > mntBalance * 0.99) {
-            sellMntQty = kotlin.math.floor(mntBalance * 0.99 * 100.0) / 100.0
+        // Sell targetUsdtTrade worth of BASE at sellPrice
+        var sellBaseQty = targetUsdtTrade / sellPrice
+        sellBaseQty = kotlin.math.floor(sellBaseQty * 100.0) / 100.0
+        if (sellBaseQty > baseCoinBalance * 0.99) {
+            sellBaseQty = kotlin.math.floor(baseCoinBalance * 0.99 * 100.0) / 100.0
         }
-        val sellUsdtValue = sellMntQty * sellPrice
+        val sellUsdtValue = sellBaseQty * sellPrice
         val postSellUsdt = usdtBalance + sellUsdtValue
-        val postSellMntValue = (mntBalance - sellMntQty) * sellPrice
+        val postSellBaseValue = (baseCoinBalance - sellBaseQty) * sellPrice
 
         // 2. BUY LIMIT ORDER (-stepPercent)
-        // Buy targetUsdtTrade worth of MNT at buyPrice
-        var buyMntQty = targetUsdtTrade / buyPrice
-        buyMntQty = kotlin.math.floor(buyMntQty * 100.0) / 100.0
-        var buyUsdtValue = buyMntQty * buyPrice
+        // Buy targetUsdtTrade worth of BASE at buyPrice
+        var buyBaseQty = targetUsdtTrade / buyPrice
+        buyBaseQty = kotlin.math.floor(buyBaseQty * 100.0) / 100.0
+        var buyUsdtValue = buyBaseQty * buyPrice
         if (buyUsdtValue > usdtBalance * 0.99) {
             val maxUsdt = usdtBalance * 0.99
-            buyMntQty = kotlin.math.floor((maxUsdt / buyPrice) * 100.0) / 100.0
-            buyUsdtValue = buyMntQty * buyPrice
+            buyBaseQty = kotlin.math.floor((maxUsdt / buyPrice) * 100.0) / 100.0
+            buyUsdtValue = buyBaseQty * buyPrice
         }
         val postBuyUsdt = usdtBalance - buyUsdtValue
-        val postBuyMntValue = (mntBalance + buyMntQty) * buyPrice
+        val postBuyBaseValue = (baseCoinBalance + buyBaseQty) * buyPrice
 
-        val isSellValid = sellMntQty >= 0.01 && sellUsdtValue >= minUsdtAmt && sellMntQty <= mntBalance
-        val isBuyValid = buyMntQty >= 0.01 && buyUsdtValue >= minUsdtAmt && buyUsdtValue <= usdtBalance
+        val isSellValid = sellBaseQty >= 0.01 && sellUsdtValue >= minUsdtAmt && sellBaseQty <= baseCoinBalance
+        val isBuyValid = buyBaseQty >= 0.01 && buyUsdtValue >= minUsdtAmt && buyUsdtValue <= usdtBalance
 
         val isValid = isSellValid && isBuyValid
         val msg = when {
-            sellMntQty > mntBalance || mntBalance * sellPrice < minUsdtAmt ->
-                "Yetersiz MNT bakiyesi (Min: ${format2(minUsdtAmt)} USDT değerinde MNT gerekir, Eldeki: ${format4(mntBalance)} MNT)"
+            sellBaseQty > baseCoinBalance || baseCoinBalance * sellPrice < minUsdtAmt ->
+                "Yetersiz BASE bakiyesi (Min: ${format2(minUsdtAmt)} USDT değerinde BASE gerekir, Eldeki: ${format4(baseCoinBalance)} BASE)"
             buyUsdtValue > usdtBalance || usdtBalance < minUsdtAmt ->
                 "Yetersiz USDT bakiyesi (Min: ${format2(minUsdtAmt)} USDT gerekir, Eldeki: ${format2(usdtBalance)} USDT)"
             sellUsdtValue < minUsdtAmt || buyUsdtValue < minUsdtAmt ->
-                "Bybit minimum spot emir tutarı 5.0 USDT'dir. Hesaptaki bakiyeler (USDT ve MNT) en az 5.2 USDT olmalıdır."
-            else -> "Hazır: +%$stepPercent (${format4(sellPrice)}) -> ${format4(sellMntQty)} MNT sat (~${format2(sellUsdtValue)} USDT) | -%$stepPercent (${format4(buyPrice)}) -> ${format4(buyMntQty)} MNT al (~${format2(buyUsdtValue)} USDT)"
+                "Bybit minimum spot emir tutarı 5.0 USDT'dir. Hesaptaki bakiyeler (USDT ve BASE) en az 5.2 USDT olmalıdır."
+            else -> "Hazır: +%$stepPercent (${format4(sellPrice)}) -> ${format4(sellBaseQty)} BASE sat (~${format2(sellUsdtValue)} USDT) | -%$stepPercent (${format4(buyPrice)}) -> ${format4(buyBaseQty)} BASE al (~${format2(buyUsdtValue)} USDT)"
         }
 
         return GridOrdersPlan(
             basePrice = basePrice,
             stepPercent = stepPercent,
             sellLimitPrice = sellPrice,
-            sellMntQty = sellMntQty,
+            sellBaseQty = sellBaseQty,
             sellUsdtValue = sellUsdtValue,
             buyLimitPrice = buyPrice,
-            buyMntQty = buyMntQty,
+            buyBaseQty = buyBaseQty,
             buyUsdtValue = buyUsdtValue,
             isValid = isValid,
             validationMessage = msg,
             postSellUsdt = postSellUsdt,
-            postSellMntValue = postSellMntValue,
+            postSellBaseValue = postSellBaseValue,
             postBuyUsdt = postBuyUsdt,
-            postBuyMntValue = postBuyMntValue
+            postBuyBaseValue = postBuyBaseValue
         )
     }
 
@@ -259,7 +259,7 @@ object RebalanceEngine {
      * When multiple symbols are present or symbol is "ALL"/blank:
      * - Computes a separate, accurate TradeAnalysisResult for EACH individual traded coin/symbol.
      * - Collects them into `symbolBreakdown` Map<String, TradeAnalysisResult>.
-     * - Avoids cross-coin unit corruption (e.g. adding BTC qty to MNT qty).
+     * - Avoids cross-coin unit corruption (e.g. adding BTC qty to BASE qty).
      */
     fun calculateTradeAnalysis(
         symbol: String?,
@@ -269,7 +269,7 @@ object RebalanceEngine {
     ): TradeAnalysisResult {
         if (executions.isEmpty()) {
             return TradeAnalysisResult(
-                symbol = symbol?.takeIf { it.isNotBlank() } ?: "MNTUSDT",
+                symbol = symbol?.takeIf { it.isNotBlank() } ?: "BASEUSDT",
                 daysRange = daysRange,
                 dateRangeLabel = dateRangeLabel,
                 fetchedAt = System.currentTimeMillis()
@@ -278,7 +278,7 @@ object RebalanceEngine {
 
         // Distinct symbols present in executions
         val distinctSymbols = executions
-            .map { it.symbol.trim().uppercase().ifBlank { "MNTUSDT" } }
+            .map { it.symbol.trim().uppercase().ifBlank { "BASEUSDT" } }
             .distinct()
             .sorted()
 
@@ -286,7 +286,7 @@ object RebalanceEngine {
 
         for (sym in distinctSymbols) {
             val symExecs = executions.filter {
-                it.symbol.trim().uppercase().ifBlank { "MNTUSDT" } == sym
+                it.symbol.trim().uppercase().ifBlank { "BASEUSDT" } == sym
             }
             val buyExecs = symExecs.filter { it.isBuy }
             val sellExecs = symExecs.filter { it.isSell }
@@ -403,7 +403,7 @@ object RebalanceEngine {
         orders: List<OrderEntity>,
         exchangeTrades: List<ExchangeTradeEntity> = emptyList(),
         apiAnalysis: TradeAnalysisResult? = null,
-        symbol: String? = "MNTUSDT",
+        symbol: String? = "BASEUSDT",
         startTimestamp: Long? = null,
         endTimestamp: Long? = null
     ): TradeAnalysisResult {
@@ -418,7 +418,7 @@ object RebalanceEngine {
                     execId = trade.execId,
                     orderId = trade.orderId,
                     orderLinkId = trade.orderLinkId,
-                    symbol = trade.symbol.ifBlank { "MNTUSDT" },
+                    symbol = trade.symbol.ifBlank { "BASEUSDT" },
                     side = trade.side,
                     orderPrice = trade.orderPrice.toString(),
                     orderQty = trade.orderQty.toString(),
@@ -450,7 +450,7 @@ object RebalanceEngine {
                         execId = "order_${order.orderId}",
                         orderId = order.orderId,
                         orderLinkId = order.orderLinkId,
-                        symbol = order.symbol.ifBlank { "MNTUSDT" },
+                        symbol = order.symbol.ifBlank { "BASEUSDT" },
                         side = order.side,
                         orderPrice = p.toString(),
                         orderQty = q.toString(),
@@ -507,7 +507,7 @@ object RebalanceEngine {
         }
 
         return TradeAnalysisResult(
-            symbol = symbol ?: "MNTUSDT",
+            symbol = symbol ?: "BASEUSDT",
             daysRange = calculatedDaysRange,
             dateRangeLabel = rangeLabel,
             fetchedAt = System.currentTimeMillis()
@@ -518,8 +518,8 @@ object RebalanceEngine {
      * Bybit Spot işlem komisyonunu USDT karşılığına güvenli ve doğru şekilde dönüştürür.
      * Bybit Spot kuralları:
      * - Satışta komisyon her zaman USDT (quote) cinsinden kesilir.
-     * - Alışta Bybit varsayılan olarak alınan coinden veya MNT/USDT indiriminden kesebilir.
-     * - Ancak kullanıcı USDT veya MNT ile ödediyse ya da execFee değeri zaten USDT ise,
+     * - Alışta Bybit varsayılan olarak alınan coinden veya BASE/USDT indiriminden kesebilir.
+     * - Ancak kullanıcı USDT veya BASE ile ödediyse ya da execFee değeri zaten USDT ise,
      *   bunu tekrar BTC fiyatıyla çarpmak astronomik (ör. $3,241) hatalı komisyonlara yol açar.
      */
     fun calculateExecutionFeeUsdt(
@@ -560,7 +560,7 @@ object RebalanceEngine {
             return rawFee
         }
 
-        // 4. Durum: feeCurrency açıkça baseAsset (ör. "BTC", "MNT") ise veya boş olup rawFee makul bir coin miktarıysa:
+        // 4. Durum: feeCurrency açıkça baseAsset (ör. "BTC", "BASE") ise veya boş olup rawFee makul bir coin miktarıysa:
         if (feeCurr == baseAsset || (feeCurr.isEmpty() && exec.isBuy && execQty > 0.0 && rawFee <= (execQty * 0.02))) {
             val converted = if (execPrice > 0.0) rawFee * execPrice else rawFee
             // Güvenlik tavanı: Bir spot işlemde komisyon işlem tutarının %2'sinden büyük olamaz!
@@ -581,8 +581,8 @@ object RebalanceEngine {
     }
 
     /**
-     * Kripto para miktarlarını (BTC, ETH, MNT vb.) sıfır basamağı kaybı olmadan akıllıca formatlar.
-     * Örneğin 0.0008 BTC -> "0.0008", 0.0025 BTC -> "0.0025", 1500 MNT -> "1,500.00"
+     * Kripto para miktarlarını (BTC, ETH, BASE vb.) sıfır basamağı kaybı olmadan akıllıca formatlar.
+     * Örneğin 0.0008 BTC -> "0.0008", 0.0025 BTC -> "0.0025", 1500 BASE -> "1,500.00"
      */
     fun formatCryptoQty(qty: Double): String {
         val absQty = Math.abs(qty)

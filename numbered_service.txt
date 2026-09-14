@@ -1,0 +1,408 @@
+     1	package com.example.service
+     2	
+     3	import android.app.Notification
+     4	import android.app.NotificationChannel
+     5	import android.app.NotificationManager
+     6	import android.app.AlarmManager
+     7	import android.app.PendingIntent
+     8	import android.app.Service
+     9	import android.content.Context
+    10	import android.content.Intent
+    11	import android.net.wifi.WifiManager
+    12	import android.os.Build
+    13	import android.os.IBinder
+    14	import android.os.PowerManager
+    15	import android.util.Log
+    16	import androidx.core.app.NotificationCompat
+    17	import com.example.BybitBotApp
+    18	import com.example.MainActivity
+    19	import com.example.R
+    20	import com.example.bot.RebalanceEngine
+    21	import com.example.data.local.BotPreferences
+    22	import com.example.data.local.entity.LogLevel
+    23	import com.example.data.remote.BybitWebSocketClient
+    24	import com.example.data.remote.model.BybitOrderDto
+    25	import com.example.data.repository.BybitRepository
+    26	import kotlinx.coroutines.CancellationException
+    27	import kotlinx.coroutines.CoroutineScope
+    28	import kotlinx.coroutines.Dispatchers
+    29	import kotlinx.coroutines.Job
+    30	import kotlinx.coroutines.SupervisorJob
+    31	import kotlinx.coroutines.cancel
+    32	import kotlinx.coroutines.delay
+    33	import kotlinx.coroutines.isActive
+    34	import kotlinx.coroutines.launch
+    35	import java.util.concurrent.atomic.AtomicBoolean
+    36	
+    37	class TradingBotService : Service() {
+    38	    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    39	    private var wakeLock: PowerManager.WakeLock? = null
+    40	    private var wifiLock: WifiManager.WifiLock? = null
+    41	    private lateinit var preferences: BotPreferences
+    42	    private lateinit var repository: BybitRepository
+    43	    private lateinit var wsClient: BybitWebSocketClient
+    44	    private lateinit var database: com.example.data.local.AppDatabase
+    45	    private var pollingJob: Job? = null
+    46	    private var isBotLoopRunning = AtomicBoolean(false)
+    47	    private var currentBasePrice: Double = 0.0
+    48	    private var lastUsdtBalance: Double = 0.0
+    49	    private var lastBaseBalance: Double = 0.0
+    50	
+    51	    override fun onCreate() {
+    52	        super.onCreate()
+    53	        val app = application as BybitBotApp
+    54	        preferences = app.preferences
+    55	        repository = app.repository
+    56	        database = app.database
+    57	        wsClient = BybitWebSocketClient(serviceScope)
+    58	        createNotificationChannels()
+    59	        acquireWakeLock()
+    60	    }
+    61	
+    62	    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+    63	        val action = intent?.action
+    64	        when (action) {
+    65	            ACTION_STOP_BOT -> {
+    66	                stopBot()
+    67	                stopForeground(STOP_FOREGROUND_REMOVE)
+    68	                stopSelf()
+    69	                return START_NOT_STICKY
+    70	            }
+    71	            ACTION_START_BOT, null -> {
+    72	                try {
+    73	                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+    74	                        startForeground(NOTIFICATION_ID, buildForegroundNotification("Bybit Bot Başlatılıyor..."), android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+    75	                    } else {
+    76	                        startForeground(NOTIFICATION_ID, buildForegroundNotification("Bybit Bot Başlatılıyor..."))
+    77	                    }
+    78	                } catch (e: Exception) {
+    79	                    Log.e("TradingBotService", "startForeground failed", e)
+    80	                }
+    81	                startBot()
+    82	                scheduleKeepAliveAlarm()
+    83	            }
+    84	                    }
+    85	            }
+    86	        }
+    87	        return START_STICKY
+    88	    }
+    89	
+    90	    override fun onBind(intent: Intent?): IBinder? = null
+    91	
+    92	    private fun acquireWakeLock() {
+    93	        try {
+    94	            if (wakeLock == null) {
+    95	                val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+    96	                wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "BybitBot::TradingWakeLock")
+    97	                wakeLock?.setReferenceCounted(false)
+    98	            }
+    99	            wakeLock?.acquire(24 * 60 * 60 * 1000L)
+   100	
+   101	            if (wifiLock == null) {
+   102	                val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+   103	                @Suppress("DEPRECATION")
+   104	                wifiLock = wifiManager?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "BybitBot::TradingWifiLock")
+   105	                wifiLock?.setReferenceCounted(false)
+   106	            }
+   107	            wifiLock?.acquire()
+   108	        } catch (e: Exception) {
+   109	            Log.e("TradingBotService", "WakeLock/WifiLock acquire error", e)
+   110	        }
+   111	    }
+   112	
+   113	    private fun startBot() {
+   114	        if (isBotLoopRunning.getAndSet(true)) return
+   115	        preferences.isBotActive = true
+   116	
+   117	        serviceScope.launch {
+   118	            val offset = repository.syncServerTime(preferences.isTestnet)
+   119	            repository.log(LogLevel.INFO, "BotService", "7/24 Bybit Ticaret Botu başlatıldı (Zaman farkı: $offset ms)")
+   120	
+   121	            wsClient.connect(
+   122	                key = preferences.apiKey,
+   123	                secret = preferences.apiSecret,
+   124	                testnet = preferences.isTestnet,
+   125	                timeOffsetMs = offset
+   126	            )
+   127	
+   128	            launch {
+   129	                wsClient.priceUpdates.collect { price ->
+   130	                    if (price > 0.0 && price != currentBasePrice) {
+   131	                        currentBasePrice = price
+   132	                    }
+   133	            }
+   134	
+   135	            launch {
+   136	                wsClient.orderUpdates.collect { order ->
+   137	                    handleOrderUpdate(order)
+   138	            }
+   139	
+   140	            launch {
+   141	                while (isActive && isBotLoopRunning.get()) {
+   142	                    delay(30000)
+   143	                    try {
+   144	                        repository.syncUnfilledOrdersWithExchange()
+   145	                    } catch (e: Exception) {
+   146	                        // ignore
+   147	                    }
+   148	            }
+   149	
+   150	            startWatchdogLoop()
+   151	        }
+   152	    }
+   153	
+   154	    private fun startWatchdogLoop() {
+   155	        pollingJob?.cancel()
+   156	        pollingJob = serviceScope.launch {
+   157	            var cycleCount = 0
+   158	            while (isActive && isBotLoopRunning.get()) {
+   159	                    if (currentBasePrice <= 0.0 || cycleCount % 3 == 0) {
+   160	                        val tickerRes = repository.getTicker()
+   161	                        tickerRes.onSuccess { ticker ->
+   162	                            currentBasePrice = ticker.currentPrice
+   163	                        }
+   164	                    }
+   165	
+   166	                    if (cycleCount % 3 == 0 || lastUsdtBalance <= 0.0) {
+   167	                        val balanceRes = repository.getWalletBalance()
+   168	                        balanceRes.onSuccess { balances ->
+   169	                            lastUsdtBalance = balances["USDT"] ?: 0.0
+   170	                            lastBaseBalance = balances["${preferences.bybitBaseCoin}"] ?: 0.0
+   171	                            updateNotification()
+   172	                        }
+   173	                    }
+   174	                } catch (e: CancellationException) {
+   175	                    throw e
+   176	                    Log.e("Watchdog", "Error in watchdog loop", e)
+   177	                cycleCount++
+   178	                delay(4000)
+   179	            }
+   180	        }
+   181	    }
+   182	
+   183	    private suspend fun handleOrderUpdate(order: BybitOrderDto) {
+   184	        if (order.orderStatus == "Filled") {
+   185	            val orderId = order.orderId
+   186	            val avgPrice = order.avgPrice.toDoubleOrNull() ?: 0.0
+   187	            val fillPrice = if (avgPrice > 0.0) avgPrice else (order.priceValue)
+   188	            val execQty = order.cumExecQty.toDoubleOrNull() ?: 0.0
+   189	            val fillQty = if (execQty > 0.0) execQty else order.qtyValue
+   190	
+   191	            repository.recordOrderFilled(
+   192	                orderId = orderId,
+   193	                side = order.side,
+   194	                price = fillPrice,
+   195	                qty = fillQty,
+   196	                triggerReason = if (order.side.equals("Buy", ignoreCase = true)) "GridStepDownBuy" else "GridStepUpSell",
+   197	                fillTime = order.updatedTime.toLongOrNull() ?: 0L
+   198	            )
+   199	            repository.reconcileGridOrders(callerTag = "WebSocket")
+   200	
+   201	            val notifId = ALERT_NOTIFICATION_ID_BASE + (orderId.hashCode() and 0x7FFFFFFF) % 500
+   202	            sendAlertNotification(
+   203	                "${order.side} Limit Emri Gerçekleşti!",
+   204	                "${order.side} ${order.cumExecQty.toDoubleOrNull() ?: 0.0} ${preferences.bybitBaseCoin} @ ${order.avgPrice.toDoubleOrNull() ?: 0.0} USDT. Karşı emir iptal edildi ve yeni ızgara kuruldu.",
+   205	                false,
+   206	                notificationId = notifId
+   207	            )
+   208	        }
+   209	    }
+   210	
+   211	    private fun updateNotification() {
+   212	        val title = "Bybit 7/24 Rebalance Bot: AKTİF"
+   213	        val baseVal = lastBaseBalance * currentBasePrice
+   214	        val total = lastUsdtBalance + baseVal
+   215	        val uPct = if (total > 0) (lastUsdtBalance / total * 100).toInt() else 50
+   216	        val bPct = if (total > 0) (baseVal / total * 100).toInt() else 50
+   217	        val content = "${preferences.bybitBaseCoin}: $${RebalanceEngine.format4(currentBasePrice)} | Portföy: %$uPct USDT / %$bPct ${preferences.bybitBaseCoin} ($${RebalanceEngine.format2(total)})"
+   218	        
+   219	        val notification = buildForegroundNotification(content)
+   220	        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+   221	        manager.notify(NOTIFICATION_ID, notification)
+   222	    }
+   223	
+   224	    private fun buildForegroundNotification(contentText: String): Notification {
+   225	        val intent = Intent(this, MainActivity::class.java).apply {
+   226	            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+   227	        }
+   228	        val pendingIntent = PendingIntent.getActivity(
+   229	            this, 0, intent,
+   230	            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+   231	        )
+   232	        val stopIntent = Intent(this, TradingBotService::class.java).apply {
+   233	            action = ACTION_STOP_BOT
+   234	        }
+   235	        val stopPendingIntent = PendingIntent.getService(
+   236	            this, 1, stopIntent,
+   237	            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+   238	        )
+   239	
+   240	        return NotificationCompat.Builder(this, CHANNEL_BOT_STATUS)
+   241	            .setContentTitle("Bybit 7/24 Dengeleme Botu")
+   242	            .setContentText(contentText)
+   243	            .setSmallIcon(R.drawable.ic_launcher_foreground)
+   244	            .setContentIntent(pendingIntent)
+   245	            .setOngoing(true)
+   246	            .setPriority(NotificationCompat.PRIORITY_LOW)
+   247	            .addAction(R.drawable.ic_launcher_foreground, "Botu Durdur", stopPendingIntent)
+   248	            .build()
+   249	    }
+   250	
+   251	    private fun sendAlertNotification(
+   252	        title: String,
+   253	        message: String,
+   254	        isError: Boolean,
+   255	        notificationId: Int = ALERT_NOTIFICATION_ID_BASE
+   256	    ) {
+   257	        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+   258	        val intent = Intent(this, MainActivity::class.java).apply {
+   259	            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+   260	        }
+   261	        val pendingIntent = PendingIntent.getActivity(
+   262	            this,
+   263	            notificationId,
+   264	            intent,
+   265	            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+   266	        )
+   267	
+   268	        val notification = NotificationCompat.Builder(this, CHANNEL_ALERTS)
+   269	            .setContentTitle(title)
+   270	            .setContentText(message)
+   271	            .setStyle(NotificationCompat.BigTextStyle().bigText(message))
+   272	            .setSmallIcon(R.drawable.ic_launcher_foreground)
+   273	            .setContentIntent(pendingIntent)
+   274	            .setAutoCancel(true)
+   275	            .setPriority(if (isError) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_DEFAULT)
+   276	            .setDefaults(Notification.DEFAULT_ALL)
+   277	            .build()
+   278	
+   279	        manager.notify(notificationId, notification)
+   280	    }
+   281	
+   282	    private fun stopBot() {
+   283	        isBotLoopRunning.set(false)
+   284	        preferences.isBotActive = false
+   285	        pollingJob?.cancel()
+   286	        cancelKeepAliveAlarm()
+   287	        wsClient.stop()
+   288	        serviceScope.launch {
+   289	            repository.log(LogLevel.INFO, "BotService", "Bot durduruldu")
+   290	        }
+   291	    }
+   292	
+   293	    private fun createNotificationChannels() {
+   294	        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+   295	            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+   296	            
+   297	            val statusChannel = NotificationChannel(
+   298	                CHANNEL_BOT_STATUS,
+   299	                "Bybit Bot Durum Bildirimi",
+   300	                NotificationManager.IMPORTANCE_LOW
+   301	            ).apply {
+   302	                description = "Botun 7/24 arka planda sürekli çalışmasını sağlayan bildirim"
+   303	            }
+   304	            
+   305	            val alertChannel = NotificationChannel(
+   306	                CHANNEL_ALERTS,
+   307	                "Bybit Bot Emir & Hata Bildirimleri",
+   308	                NotificationManager.IMPORTANCE_HIGH
+   309	            ).apply {
+   310	                description = "Gerçekleşen emirler ve kritik hata uyarıları"
+   311	                enableVibration(true)
+   312	            }
+   313	            
+   314	            manager.createNotificationChannel(statusChannel)
+   315	            manager.createNotificationChannel(alertChannel)
+   316	        }
+   317	    }
+   318	
+   319	    private fun scheduleKeepAliveAlarm() {
+   320	        try {
+   321	            val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+   322	            val intent = Intent(this, TradingBotService::class.java).apply {
+   323	                action = ACTION_START_BOT
+   324	            }
+   325	            val pendingIntent = PendingIntent.getService(
+   326	                this, 1001, intent,
+   327	                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+   328	            )
+   329	
+   330	            // Schedule alarm to fire roughly every 15 minutes to restart service if killed
+   331	            alarmManager.setRepeating(
+   332	                AlarmManager.RTC_WAKEUP,
+   333	                System.currentTimeMillis() + 15 * 60 * 1000L,
+   334	                15 * 60 * 1000L,
+   335	                pendingIntent
+   336	            )
+   337	        } catch (e: Exception) {
+   338	            Log.e("TradingBotService", "Failed to schedule keep-alive alarm", e)
+   339	        }
+   340	    }
+   341	
+   342	    private fun cancelKeepAliveAlarm() {
+   343	        try {
+   344	            val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+   345	            val intent = Intent(this, TradingBotService::class.java).apply {
+   346	                action = ACTION_START_BOT
+   347	            }
+   348	            val pendingIntent = PendingIntent.getService(
+   349	                this, 1001, intent,
+   350	                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+   351	            )
+   352	            alarmManager.cancel(pendingIntent)
+   353	        } catch (e: Exception) {
+   354	            Log.e("TradingBotService", "Failed to cancel keep-alive alarm", e)
+   355	        }
+   356	    }
+   357	
+   358	    override fun onDestroy() {
+   359	        stopBot()
+   360	        serviceScope.cancel()
+   361	        wakeLock?.let {
+   362	            if (it.isHeld) it.release()
+   363	        }
+   364	        wifiLock?.let {
+   365	            if (it.isHeld) it.release()
+   366	        }
+   367	        super.onDestroy()
+   368	    }
+   369	
+   370	    companion object {
+   371	        const val ACTION_START_BOT = "com.example.bybit.action.START_BOT"
+   372	        const val ACTION_STOP_BOT = "com.example.bybit.action.STOP_BOT"
+   373	        private const val NOTIFICATION_ID = 1001
+   374	        private const val ALERT_NOTIFICATION_ID_BASE = 2000
+   375	        private const val CHANNEL_BOT_STATUS = "bybit_bot_status_channel"
+   376	        private const val CHANNEL_ALERTS = "bybit_bot_alerts_channel"
+   377	
+   378	        fun start(context: Context) {
+   379	            val intent = Intent(context, TradingBotService::class.java).apply {
+   380	                action = ACTION_START_BOT
+   381	            }
+   382	            try {
+   383	                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+   384	                    try {
+   385	                        context.startForegroundService(intent)
+   386	                    } catch(e: Exception) {
+   387	                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && (e is android.app.ForegroundServiceStartNotAllowedException || e.cause is android.app.ForegroundServiceStartNotAllowedException || e.message?.contains("ForegroundServiceStartNotAllowedException") == true)) {
+   388	                            Log.w("TradingBotService", "Foreground service start not allowed, starting normally.")
+   389	                            context.startService(intent)
+   390	                        } else {
+   391	                            Log.e("TradingBotService", "Foreground service failed", e)
+   392	                        }
+   393	                    }
+   394	                } else {
+   395	                    context.startService(intent)
+   396	            } catch (e: Exception) {
+   397	                Log.e("TradingBotService", "Failed to start foreground service: ${e.message}", e)
+   398	            }
+   399	        }
+   400	
+   401	        fun stop(context: Context) {
+   402	            val intent = Intent(context, TradingBotService::class.java).apply {
+   403	                action = ACTION_STOP_BOT
+   404	            }
+   405	            context.startService(intent)
+   406	        }
+   407	    }
+   408	}

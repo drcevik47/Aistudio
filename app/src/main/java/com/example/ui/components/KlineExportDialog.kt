@@ -25,6 +25,7 @@ fun KlineExportDialog(
     showDialog: Boolean,
     onDismiss: () -> Unit,
     selectedSymbol: String,
+    activeSymbol: String,
     onExport: (symbol: String, interval: String, format: String, startTime: Long, endTime: Long, context: android.content.Context) -> Unit
 ) {
     if (!showDialog) return
@@ -83,7 +84,7 @@ fun KlineExportDialog(
         title = { Text("Fiyat Geçmişi (Kline) İndir", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
         text = {
             Column {
-                Text("Bybit borsasından ${if (selectedSymbol == "ALL") "MNTUSDT" else selectedSymbol} fiyat geçmişini indirebilirsiniz.", fontSize = 13.sp, color = MinimalTextSecondary)
+                Text("Bybit borsasından ${if (selectedSymbol == "ALL") activeSymbol else selectedSymbol} fiyat geçmişini indirebilirsiniz.", fontSize = 13.sp, color = MinimalTextSecondary)
                 Spacer(modifier = Modifier.height(16.dp))
                 
                 Text("Zaman Dilimi (Interval):", fontSize = 12.sp, fontWeight = FontWeight.Bold)

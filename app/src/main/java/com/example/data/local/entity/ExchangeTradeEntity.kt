@@ -20,6 +20,7 @@ import androidx.room.PrimaryKey
 data class ExchangeTradeEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
+    val exchange: String = "BYBIT",
     val execId: String, // Bybit'teki benzersiz trade/fill ID'si (veya fallback)
     val orderId: String,
     val orderLinkId: String = "",

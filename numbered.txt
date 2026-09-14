@@ -1,0 +1,824 @@
+     1	package com.example.ui
+     2	
+     3	import android.app.Application
+     4	import androidx.lifecycle.AndroidViewModel
+     5	import androidx.lifecycle.viewModelScope
+     6	import com.example.BybitBotApp
+     7	import com.example.bot.GridOrdersPlan
+     8	import com.example.bot.PortfolioAnalysis
+     9	import com.example.bot.RebalanceAction
+    10	import com.example.bot.RebalanceEngine
+    11	import com.example.data.local.entity.ExchangeTradeEntity
+    12	import com.example.data.local.entity.LogEntity
+    13	import com.example.data.local.entity.LogLevel
+    14	import com.example.data.local.entity.OrderEntity
+    15	import com.example.data.remote.model.BybitOrderDto
+    16	import com.example.data.remote.model.TradeAnalysisResult
+    17	import com.example.data.remote.model.TradeSyncResult
+    18	import com.example.data.repository.LastFilledTradeInfo
+    19	import com.example.service.TradingBotService
+    20	import kotlinx.coroutines.Dispatchers
+    21	import kotlinx.coroutines.delay
+    22	import kotlinx.coroutines.flow.MutableStateFlow
+    23	import kotlinx.coroutines.flow.SharingStarted
+    24	import kotlinx.coroutines.flow.StateFlow
+    25	import kotlinx.coroutines.flow.asStateFlow
+    26	import kotlinx.coroutines.flow.combine
+    27	import kotlinx.coroutines.flow.stateIn
+    28	import kotlinx.coroutines.flow.update
+    29	import kotlinx.coroutines.isActive
+    30	import kotlinx.coroutines.launch
+    31	
+    32	data class TradeAnalysisUiState(
+    33	    val isLoading: Boolean = false,
+    34	    val analysis: TradeAnalysisResult? = null,
+    35	    val errorMessage: String? = null,
+    36	    val lastFetchedAt: Long = 0L,
+    37	    val progressText: String? = null,
+    38	    val syncResult: TradeSyncResult? = null,
+    39	    val syncNotice: String? = null
+    40	)
+    41	
+    42	data class MainUiState(
+    43	    val isConfigured: Boolean = false,
+    44	    val apiKey: String = "",
+    45	    val apiSecret: String = "",
+    46	    val okxApiKey: String = "",
+    47	    val okxApiSecret: String = "",
+    48	    val okxApiPassphrase: String = "",
+    49	    val isTestnet: Boolean = false,
+    50	    val activeExchange: String = "BYBIT",
+    51	    val activeBaseCoin: String = "MNT",
+    52	    val activeSymbol: String = "MNTUSDT",
+    53	    val isBotActive: Boolean = false,
+    54	    val isLoading: Boolean = false,
+    55	    val currentPrice: Double = 0.0,
+    56	    val price24hChange: Double = 0.0,
+    57	    val usdtBalance: Double = 0.0,
+    58	    val baseCoinBalance: Double = 0.0,
+    59	    val portfolioAnalysis: PortfolioAnalysis? = null,
+    60	    val gridPlan: GridOrdersPlan? = null,
+    61	    val activeOrders: List<BybitOrderDto> = emptyList(),
+    62	    val stepPercent: Double = 2.0,
+    63	    val lastRebalancePrice: Double = 0.0,
+    64	    val showInitialRebalanceDialog: Boolean = false,
+    65	    val isExecutingRebalance: Boolean = false,
+    66	    val showApiKeyDialog: Boolean = false,
+    67	    val statusMessage: String? = null,
+    68	    val errorMessage: String? = null
+    69	)
+    70	
+    71	class MainViewModel(application: Application) : AndroidViewModel(application) {
+    72	
+    73	    private val app = application as BybitBotApp
+    74	    val preferences = app.preferences
+    75	    private val repository = app.repository
+    76	    private val database = app.database
+    77	
+    78	    fun updateSymbols(bybitSymbol: String, okxSymbol: String) {
+    79	        preferences.bybitSymbol = bybitSymbol
+    80	        if (bybitSymbol.endsWith("USDT")) {
+    81	            preferences.bybitBaseCoin = bybitSymbol.removeSuffix("USDT")
+    82	 else if (bybitSymbol.endsWith("USDC")) {
+    83	            preferences.bybitBaseCoin = bybitSymbol.removeSuffix("USDC")
+    84	
+    85	        preferences.okxSymbol = okxSymbol
+    86	        if (okxSymbol.contains("-")) {
+    87	            preferences.okxBaseCoin = okxSymbol.substringBefore("-")
+    88	
+    89	        _uiState.update { 
+    90	            it.copy(
+    91	                activeSymbol = preferences.bybitSymbol,
+    92	                activeBaseCoin = preferences.bybitBaseCoin
+    93	            )
+    94	
+    95	    }
+    96	
+    97	    private val _uiState = MutableStateFlow(
+    98	        MainUiState(
+    99	            isConfigured = preferences.isConfigured,
+   100	            apiKey = preferences.apiKey,
+   101	            apiSecret = preferences.apiSecret,
+   102	            okxApiKey = preferences.okxApiKey,
+   103	            okxApiSecret = preferences.okxApiSecret,
+   104	            okxApiPassphrase = preferences.okxApiPassphrase,
+   105	            activeExchange = "BYBIT", // default to Bybit for now
+   106	            activeBaseCoin = preferences.bybitBaseCoin,
+   107	            activeSymbol = preferences.bybitSymbol,
+   108	            isTestnet = preferences.isTestnet,
+   109	            isBotActive = preferences.isBotActive,
+   110	            stepPercent = preferences.stepPercent,
+   111	            lastRebalancePrice = preferences.lastRebalancePrice,
+   112	            showApiKeyDialog = !preferences.isConfigured
+   113	        )
+   114	    )
+   115	    val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
+   116	
+   117	    val orders: StateFlow<List<OrderEntity>> = database.orderDao().getAllOrders()
+   118	        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+   119	
+   120	    val logs: StateFlow<List<LogEntity>> = database.logDao().getAllLogs()
+   121	        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+   122	
+   123	    private val _tradeAnalysis = MutableStateFlow(TradeAnalysisUiState())
+   124	    val tradeAnalysis: StateFlow<TradeAnalysisUiState> = _tradeAnalysis.asStateFlow()
+   125	
+   126	    val liveAnalysis: StateFlow<TradeAnalysisResult?> = combine(
+   127	        orders,
+   128	        repository.getAllExchangeTradesFlow()
+   129	    ) { orderList, tradeList ->
+   130	        RebalanceEngine.computeLiveTradeAnalysis(
+   131	            orders = orderList,
+   132	            exchangeTrades = tradeList
+   133	        )
+   134	    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+   135	
+   136	    init {
+   137	        if (preferences.isConfigured) {
+   138	            if (preferences.isBotActive) {
+   139	                TradingBotService.start(getApplication())
+   140	    
+   141	            viewModelScope.launch(Dispatchers.IO) {
+   142	                repository.pruneLogs()
+   143	                repository.syncUnfilledOrdersWithExchange()
+   144	            }
+   145	    
+   146	            refreshData()
+   147	        } else {
+   148	            viewModelScope.launch(Dispatchers.IO) {
+   149	                repository.pruneLogs()
+   150	            }
+   151	        }
+   152	    
+   153	
+   154	
+   155	        // Live background update loop: keeps active orders, balances, and prices up-to-date in real-time
+   156	        viewModelScope.launch(Dispatchers.IO) {
+   157	            var cycleCount = 0
+   158	            while (isActive) {
+   159	                delay(4000)
+   160	                if (preferences.isConfigured && !_uiState.value.isLoading) {
+   161	                    silentRefresh(cycleCount)
+   162	                    cycleCount++
+   163	                }
+   164	            }
+   165	        }
+   166	        
+   167	    
+   168	
+   169	    }
+   170	
+   171	    private suspend fun silentRefresh(cycleCount: Int = 0) {
+   172	        try {
+   173	            // Periodically check and sync any unfilled orders in DB with exchange
+   174	            if (cycleCount % 4 == 0) {
+   175	                repository.syncUnfilledOrdersWithExchange()
+   176	            }
+   177	    
+   178	            // Periodically prune logs older than 24 hours or exceeding 1000 items
+   179	            if (cycleCount % 30 == 0) {
+   180	                repository.pruneLogs()
+   181	            }
+   182	    
+   183	            var currentPrice = _uiState.value.currentPrice
+   184	            var priceChange = _uiState.value.price24hChange
+   185	            val tickerRes = repository.getTicker()
+   186	            tickerRes.onSuccess { ticker ->
+   187	                currentPrice = ticker.currentPrice
+   188	                priceChange = ticker.changePercent24h
+   189	            }
+   190	    
+   191	
+   192	            var usdt = _uiState.value.usdtBalance
+   193	            var baseQty = _uiState.value.baseCoinBalance
+   194	            // Stagger balance fetch every ~8 seconds (every 2 cycles) or on initial load
+   195	            if (cycleCount % 2 == 0 || usdt <= 0.0) {
+   196	                val balanceRes = repository.getWalletBalance()
+   197	                balanceRes.onSuccess { map ->
+   198	                    usdt = map["USDT"] ?: 0.0
+   199	                    baseQty = map[_uiState.value.activeBaseCoin] ?: 0.0
+   200	                }
+   201	            }
+   202	        
+   203	    
+   204	
+   205	            var openOrders = _uiState.value.activeOrders
+   206	            // Stagger open orders fetch every ~8 seconds (alternating cycle)
+   207	            if (cycleCount % 2 == 1 || openOrders.isEmpty()) {
+   208	                val openOrdersRes = repository.getOpenOrders()
+   209	                openOrdersRes.onSuccess { list ->
+   210	                    openOrders = list
+   211	                }
+   212	            }
+   213	        
+   214	    
+   215	
+   216	            val analysis = RebalanceEngine.analyzePortfolio(
+   217	                usdtBalance = usdt,
+   218	                baseCoinBalance = baseQty,
+   219	                currentPrice = currentPrice
+   220	            )
+   221	
+   222	            val anchorBasePrice = if (preferences.isBotActive && preferences.lastRebalancePrice > 0.0) {
+   223	                preferences.lastRebalancePrice
+   224	     else {
+   225	                currentPrice
+   226	    
+   227	
+   228	            val gridPlan = RebalanceEngine.calculateGridOrders(
+   229	                usdtBalance = usdt,
+   230	                baseCoinBalance = baseQty,
+   231	                basePrice = anchorBasePrice,
+   232	                stepPercent = _uiState.value.stepPercent
+   233	            )
+   234	
+   235	            _uiState.update {
+   236	                it.copy(
+   237	                    currentPrice = currentPrice,
+   238	                    price24hChange = priceChange,
+   239	                    usdtBalance = usdt,
+   240	                    baseCoinBalance = baseQty,
+   241	                    activeOrders = openOrders,
+   242	                    portfolioAnalysis = analysis,
+   243	                    gridPlan = gridPlan,
+   244	                    isBotActive = preferences.isBotActive,
+   245	                    lastRebalancePrice = preferences.lastRebalancePrice
+   246	                )
+   247	            }
+   248	                )
+   249	    
+   250	 catch (e: Exception) {
+   251	            // Silently ignore background polling exceptions
+   252	
+   253	    }
+   254	
+   255	    fun openApiKeyDialog() {
+   256	        _uiState.update { it.copy(showApiKeyDialog = true) }
+   257	    }
+   258	
+   259	    fun closeApiKeyDialog() {
+   260	        
+   261	            _uiState.update { it.copy(showApiKeyDialog = false) }
+   262	
+   263	    }
+   264	
+   265	    fun saveOkxApiCredentials(key: String, secret: String, passphrase: String) {
+   266	        viewModelScope.launch(Dispatchers.IO) {
+   267	            _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+   268	
+   269	            preferences.okxApiKey = key
+   270	            preferences.okxApiSecret = secret
+   271	            preferences.okxApiPassphrase = passphrase
+   272	
+   273	            repository.log(LogLevel.INFO, "Auth", "OKX TR API bilgileri kaydedildi")
+   274	
+   275	            _uiState.update {
+   276	                it.copy(
+   277	                    okxApiKey = key,
+   278	                    okxApiSecret = secret,
+   279	                    okxApiPassphrase = passphrase,
+   280	                    isLoading = false,
+   281	                    statusMessage = "OKX TR API bilgileri başarıyla kaydedildi"
+   282	                )
+   283	            }
+   284	        }
+   285	                )
+   286	    
+   287	
+   288	    }
+   289	
+   290	    fun saveApiCredentials(key: String, secret: String, testnet: Boolean) {
+   291	        viewModelScope.launch(Dispatchers.IO) {
+   292	            _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+   293	            preferences.saveCredentials(key, secret, testnet)
+   294	            repository.log(LogLevel.INFO, "Auth", "API bilgileri kaydedildi (Testnet: $testnet)")
+   295	
+   296	            _uiState.update {
+   297	                it.copy(
+   298	                    isConfigured = true,
+   299	                    apiKey = key,
+   300	                    apiSecret = secret,
+   301	                    isTestnet = testnet,
+   302	                    showApiKeyDialog = false
+   303	                )
+   304	            }
+   305	                )
+   306	    
+   307	            refreshData()
+   308	        }
+   309	
+   310	    }
+   311	
+   312	    fun updateStepPercent(percent: Double) {
+   313	        preferences.stepPercent = percent
+   314	        _uiState.update { it.copy(stepPercent = percent) }
+   315	        recalculateGridPlan()
+   316	    }
+   317	
+   318	    fun dismissError() {
+   319	        _uiState.update { it.copy(errorMessage = null) }
+   320	    }
+   321	
+   322	    fun refreshData() {
+   323	        viewModelScope.launch(Dispatchers.IO) {
+   324	            _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+   325	
+   326	            // 0. Synchronize server time
+   327	            repository.syncServerTime()
+   328	
+   329	            // If bot is active, actively reconcile with Bybit exchange state first
+   330	            if (preferences.isBotActive) {
+   331	                TradingBotService.start(getApplication())
+   332	                val reconRes = repository.reconcileGridOrders(callerTag = "ManuelYenile")
+   333	                reconRes.onSuccess { rec ->
+   334	                    if (rec.executedOrderFound) {
+   335	                        _uiState.update { it.copy(statusMessage = rec.message) }
+   336	            
+   337	        
+   338	    
+   339	
+   340	            // 1. Fetch Ticker
+   341	            var currentPrice = _uiState.value.currentPrice
+   342	            var priceChange = _uiState.value.price24hChange
+   343	            val tickerRes = repository.getTicker()
+   344	            tickerRes.onSuccess { ticker ->
+   345	                currentPrice = ticker.currentPrice
+   346	                priceChange = ticker.changePercent24h
+   347	            }
+   348	    .onFailure { err ->
+   349	                repository.log(LogLevel.WARN, "Market", "Ticker alınamadı: ${err.message}")
+   350	    
+   351	
+   352	            // 2. Fetch Wallet Balances
+   353	            var usdt = _uiState.value.usdtBalance
+   354	            var baseQty = _uiState.value.baseCoinBalance
+   355	            val balanceRes = repository.getWalletBalance()
+   356	            balanceRes.onSuccess { map ->
+   357	                usdt = map["USDT"] ?: 0.0
+   358	                baseQty = map[_uiState.value.activeBaseCoin] ?: 0.0
+   359	                }
+   360	            }
+   361	    .onFailure { err ->
+   362	                _uiState.update { it.copy(errorMessage = "Bakiye çekilemedi: ${err.message}", isLoading = false) }
+   363	                return@launch
+   364	    
+   365	
+   366	            // 3. Fetch Open Orders
+   367	            var openOrders = emptyList<BybitOrderDto>()
+   368	            val openOrdersRes = repository.getOpenOrders()
+   369	            openOrdersRes.onSuccess { list ->
+   370	                openOrders = list
+   371	                }
+   372	            }
+   373	    
+   374	
+   375	            val analysis = RebalanceEngine.analyzePortfolio(
+   376	                usdtBalance = usdt,
+   377	                baseCoinBalance = baseQty,
+   378	                currentPrice = currentPrice
+   379	            )
+   380	
+   381	            val anchorBasePrice = if (preferences.isBotActive && preferences.lastRebalancePrice > 0.0) {
+   382	                preferences.lastRebalancePrice
+   383	     else {
+   384	                currentPrice
+   385	    
+   386	
+   387	            val gridPlan = RebalanceEngine.calculateGridOrders(
+   388	                usdtBalance = usdt,
+   389	                baseCoinBalance = baseQty,
+   390	                basePrice = anchorBasePrice,
+   391	                stepPercent = _uiState.value.stepPercent
+   392	            )
+   393	
+   394	            val shouldShowInitialDialog = !analysis.isBalanced5050 &&
+   395	                    analysis.requiredAction != RebalanceAction.BALANCED &&
+   396	                    !preferences.isBotActive &&
+   397	                    analysis.deltaUsdt >= 1.0
+   398	
+   399	            _uiState.update {
+   400	                it.copy(
+   401	                    isLoading = false,
+   402	                    currentPrice = currentPrice,
+   403	                    price24hChange = priceChange,
+   404	                    usdtBalance = usdt,
+   405	                    baseCoinBalance = baseQty,
+   406	                    portfolioAnalysis = analysis,
+   407	                    gridPlan = gridPlan,
+   408	                    activeOrders = openOrders,
+   409	                    isBotActive = preferences.isBotActive,
+   410	                    lastRebalancePrice = preferences.lastRebalancePrice,
+   411	                )
+   412	            }
+   413	                    showInitialRebalanceDialog = shouldShowInitialDialog
+   414	                )
+   415	    
+   416	
+   417	    }
+   418	
+   419	    private fun recalculateGridPlan() {
+   420	        val state = _uiState.value
+   421	        val anchorBasePrice = if (preferences.isBotActive && preferences.lastRebalancePrice > 0.0) {
+   422	            preferences.lastRebalancePrice
+   423	 else {
+   424	            state.currentPrice
+   425	
+   426	        val plan = RebalanceEngine.calculateGridOrders(
+   427	            usdtBalance = state.usdtBalance,
+   428	            baseCoinBalance = state.baseCoinBalance,
+   429	            basePrice = anchorBasePrice,
+   430	            stepPercent = state.stepPercent
+   431	        )
+   432	        _uiState.update { it.copy(gridPlan = plan) }
+   433	    }
+   434	
+   435	    fun requestInitialRebalanceDialog() {
+   436	        _uiState.update { it.copy(showInitialRebalanceDialog = true) }
+   437	    }
+   438	
+   439	    fun dismissInitialRebalanceDialog() {
+   440	        _uiState.update { it.copy(showInitialRebalanceDialog = false) }
+   441	    }
+   442	
+   443	    /**
+   444	     * Executes the initial 50/50 balance trade upon user confirmation.
+   445	     */
+   446	    fun executeInitialRebalance() {
+   447	        val analysis = _uiState.value.portfolioAnalysis ?: return
+   448	        val currentPrice = _uiState.value.currentPrice
+   449	        if (currentPrice <= 0.0) return
+   450	
+   451	        viewModelScope.launch(Dispatchers.IO) {
+   452	            _uiState.update { it.copy(isExecutingRebalance = true, errorMessage = null) }
+   453	
+   454	            val side = if (analysis.requiredAction == RebalanceAction.BUY_BASE) "Buy" else "Sell"
+   455	            val qty = analysis.deltaBase
+   456	
+   457	            repository.log(
+   458	                LogLevel.INFO,
+   459	                "InitialRebalance",
+   460	                "Kullanıcı onayı ile başlangıç eşitlemesi yapılıyor: $side ${RebalanceEngine.format4(qty)} ${_uiState.value.activeBaseCoin} (~${RebalanceEngine.format2(analysis.deltaUsdt)} USDT)"
+   461	            )
+   462	
+   463	            // Execute Market order for instant 50/50 equalization
+   464	            val res = repository.createOrder(
+   465	                side = side,
+   466	                orderType = "Market",
+   467	                qty = qty,
+   468	                price = null,
+   469	                triggerReason = "InitialRebalance"
+   470	            )
+   471	
+   472	            res.onSuccess { orderId ->
+   473	                repository.log(LogLevel.SUCCESS, "InitialRebalance", "Başlangıç %50-%50 eşitleme emri gerçekleşti: $orderId")
+   474	                preferences.lastRebalancePrice = currentPrice
+   475	                repository.recordOrderFilled(
+   476	                    orderId = orderId,
+   477	                    side = side,
+   478	                    price = currentPrice,
+   479	                    qty = qty,
+   480	                    triggerReason = "InitialRebalance"
+   481	                )
+   482	                _uiState.update {
+   483	                    it.copy(
+   484	                        isExecutingRebalance = false,
+   485	                        showInitialRebalanceDialog = false,
+   486	                        lastRebalancePrice = currentPrice,
+   487	                        statusMessage = "Portföy %50-%50 olarak başarıyla dengelendi!"
+   488	                    )
+   489	        
+   490	                kotlinx.coroutines.delay(1000)
+   491	                refreshData()
+   492	    .onFailure { err ->
+   493	                repository.log(LogLevel.ERROR, "InitialRebalance", "Eşitleme emri verilemedi: ${err.message}")
+   494	                _uiState.update {
+   495	                    it.copy(
+   496	                        isExecutingRebalance = false,
+   497	                        errorMessage = "Eşitleme emri hatası: ${err.message}"
+   498	                    )
+   499	        
+   500	    
+   501	
+   502	    }
+   503	
+   504	    /**
+   505	     * Starts 24/7 background Bot Service and places grid orders (+2% sell & -2% buy).
+   506	     */
+   507	    fun startBot() {
+   508	        viewModelScope.launch(Dispatchers.IO) {
+   509	            _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+   510	
+   511	            val state = _uiState.value
+   512	            val price = state.currentPrice
+   513	            val usdt = state.usdtBalance
+   514	            val baseQty = state.baseCoinBalance
+   515	
+   516	            if (price <= 0.0 || usdt <= 0.0 || baseQty <= 0.0) {
+   517	                _uiState.update {
+   518	                    it.copy(
+   519	                        isLoading = false,
+   520	                        errorMessage = "Botu başlatmak için ${_uiState.value.activeBaseCoin} ve USDT bakiyesi gereklidir."
+   521	                    )
+   522	        
+   523	                return@launch
+   524	    
+   525	
+   526	            val plan = RebalanceEngine.calculateGridOrders(
+   527	                usdtBalance = usdt,
+   528	                baseCoinBalance = baseQty,
+   529	                basePrice = price,
+   530	                stepPercent = state.stepPercent
+   531	            )
+   532	
+   533	            if (!plan.isValid) {
+   534	                _uiState.update {
+   535	                    it.copy(
+   536	                        isLoading = false,
+   537	                        errorMessage = plan.validationMessage
+   538	                    )
+   539	        
+   540	                return@launch
+   541	    
+   542	
+   543	            // Cancel any old orders first
+   544	            repository.cancelAllBaseOrders()
+   545	
+   546	            // Place Limit Sell (+2%)
+   547	            val sellRes = repository.createOrder(
+   548	                side = "Sell",
+   549	                orderType = "Limit",
+   550	                qty = plan.sellBaseQty,
+   551	                price = plan.sellLimitPrice,
+   552	                triggerReason = "GridStepUpSell"
+   553	            )
+   554	
+   555	            // Place Limit Buy (-2%)
+   556	            val buyRes = repository.createOrder(
+   557	                side = "Buy",
+   558	                orderType = "Limit",
+   559	                qty = plan.buyBaseQty,
+   560	                price = plan.buyLimitPrice,
+   561	                triggerReason = "GridStepDownBuy"
+   562	            )
+   563	
+   564	            val orderError = sellRes.exceptionOrNull()?.message ?: buyRes.exceptionOrNull()?.message
+   565	            if (orderError != null) {
+   566	                _uiState.update {
+   567	                    it.copy(
+   568	                        isLoading = false,
+   569	                        errorMessage = "Emir iletilemedi: $orderError"
+   570	                    )
+   571	        
+   572	                return@launch
+   573	    
+   574	
+   575	            sellRes.onSuccess { sellId ->
+   576	                preferences.activeSellOrderId = sellId
+   577	    
+   578	            buyRes.onSuccess { buyId ->
+   579	                preferences.activeBuyOrderId = buyId
+   580	    
+   581	
+   582	            preferences.isBotActive = true
+   583	            preferences.lastRebalancePrice = price
+   584	            repository.lastGridOrderPlacedTimeMs = System.currentTimeMillis()
+   585	
+   586	            // Start Foreground 24/7 Service
+   587	            TradingBotService.start(getApplication())
+   588	
+   589	            _uiState.update {
+   590	                it.copy(
+   591	                    isLoading = false,
+   592	                    isBotActive = true,
+   593	                    statusMessage = "7/24 Dengeleme Botu Başlatıldı! %${state.stepPercent} Limit emirler aktifleştirildi."
+   594	                )
+   595	    
+   596	            refreshData()
+   597	
+   598	    }
+   599	
+   600	    fun stopBot() {
+   601	        preferences.isBotActive = false
+   602	        TradingBotService.stop(getApplication())
+   603	        _uiState.update {
+   604	            it.copy(
+   605	                isBotActive = false,
+   606	                statusMessage = "Bot durduruldu."
+   607	            )
+   608	
+   609	        viewModelScope.launch(Dispatchers.IO) {
+   610	            repository.log(LogLevel.INFO, "BotControl", "Kullanıcı botu durdurdu.")
+   611	            refreshData()
+   612	
+   613	    }
+   614	
+   615	    fun cancelAllOrders() {
+   616	        viewModelScope.launch(Dispatchers.IO) {
+   617	            _uiState.update { it.copy(isLoading = true) }
+   618	            val res = repository.cancelAllBaseOrders()
+   619	            res.onSuccess {
+   620	                _uiState.update { it.copy(statusMessage = "Tüm açık emirler iptal edildi.", isLoading = false) }
+   621	    .onFailure { err ->
+   622	                _uiState.update { it.copy(errorMessage = "İptal hatası: ${err.message}", isLoading = false) }
+   623	    
+   624	            refreshData()
+   625	
+   626	    }
+   627	
+   628	    fun clearLogs() {
+   629	        viewModelScope.launch(Dispatchers.IO) {
+   630	            database.logDao().clearAllLogs()
+   631	            repository.log(LogLevel.INFO, "System", "Log geçmişi temizlendi")
+   632	
+   633	    }
+   634	
+   635	    fun clearOrders() {
+   636	        viewModelScope.launch(Dispatchers.IO) {
+   637	            database.orderDao().clearAllOrders()
+   638	
+   639	    }
+   640	
+   641	    fun clearMessages() {
+   642	        _uiState.update { it.copy(statusMessage = null, errorMessage = null) }
+   643	    }
+   644	
+   645	    fun setCustomBasePrice(newPrice: Double) {
+   646	        if (newPrice <= 0.0) return
+   647	        viewModelScope.launch(Dispatchers.IO) {
+   648	            _uiState.update { it.copy(isLoading = true) }
+   649	            val res = repository.applyCustomBasePrice(newPrice)
+   650	            res.fold(
+   651	                onSuccess = {
+   652	                    _uiState.update {
+   653	                        it.copy(
+   654	                            isLoading = false,
+   655	                            lastRebalancePrice = newPrice,
+   656	                            statusMessage = "Baz fiyat $${RebalanceEngine.format4(newPrice)} olarak belirlendi ve yeni ızgara aktif edildi."
+   657	                        )
+   658	            
+   659	        ,
+   660	                onFailure = { err ->
+   661	                    _uiState.update {
+   662	                        it.copy(
+   663	                            isLoading = false,
+   664	                            errorMessage = "Baz fiyat ayarlanamadı: ${err.message}"
+   665	                        )
+   666	            
+   667	        
+   668	            )
+   669	            refreshData()
+   670	
+   671	    }
+   672	
+   673	    fun getLastRealFilledPrice(callback: (Double?) -> Unit) {
+   674	        viewModelScope.launch {
+   675	            val price = repository.getLastRealFilledPrice()
+   676	            callback(price)
+   677	
+   678	    }
+   679	
+   680	    fun getLastRealFilledTradeInfo(callback: (LastFilledTradeInfo?) -> Unit) {
+   681	        viewModelScope.launch {
+   682	            val info = repository.getLastRealFilledTradeInfo()
+   683	            callback(info)
+   684	
+   685	    }
+   686	
+   687	    val exchangeTrades: StateFlow<List<ExchangeTradeEntity>> = repository.getAllExchangeTradesFlow()
+   688	        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+   689	
+   690	    fun fetchTradeAnalysis(symbol: String? = "${_uiState.value.activeSymbol}", daysBack: Int = 730, startTimestamp: Long? = null) {
+   691	        viewModelScope.launch {
+   692	            _tradeAnalysis.update {
+   693	                it.copy(
+   694	                    isLoading = true,
+   695	                    errorMessage = null,
+   696	                    syncNotice = null,
+   697	                    progressText = "Borsadan işlemler çekiliyor ve veritabanı kontrol ediliyor..."
+   698	                )
+   699	    
+   700	            val result = repository.syncTradesFromExchange(
+   701	                symbol = symbol,
+   702	                daysBack = daysBack,
+   703	                startTimestamp = startTimestamp,
+   704	                onProgress = { currentWindow, totalWindows, fetchedCount ->
+   705	                    _tradeAnalysis.update {
+   706	                        it.copy(progressText = "$currentWindow / $totalWindows hafta tarandı ($fetchedCount işlem)")
+   707	            
+   708	        
+   709	            )
+   710	            result.onSuccess { syncRes ->
+   711	                val notice = if (syncRes.newlyAddedCount > 0) {
+   712	                    "✓ ${syncRes.totalFetched} işlem tarandı. ${syncRes.newlyAddedCount} YENİ işlem veritabanına eklendi! (Toplam DB: ${syncRes.totalInDb})"
+   713	         else {
+   714	                    "✓ ${syncRes.totalFetched} işlem tarandı. Tüm işlemler zaten veritabanında kayıtlı (Yeni işlem yok)."
+   715	        
+   716	                _tradeAnalysis.update {
+   717	                    it.copy(
+   718	                        isLoading = false,
+   719	                        analysis = syncRes.analysis,
+   720	                        syncResult = syncRes,
+   721	                        syncNotice = notice,
+   722	                        errorMessage = null,
+   723	                        lastFetchedAt = System.currentTimeMillis(),
+   724	                        progressText = null
+   725	                    )
+   726	        
+   727	    .onFailure { err ->
+   728	                _tradeAnalysis.update {
+   729	                    it.copy(
+   730	                        isLoading = false,
+   731	                        errorMessage = err.message ?: "İşlem geçmişi çekilemedi",
+   732	                        progressText = null
+   733	                    )
+   734	        
+   735	    
+   736	
+   737	    }
+   738	
+   739	    fun exportKlines(context: android.content.Context, symbol: String, interval: String, format: String, startTime: Long, endTime: Long) {
+   740	        viewModelScope.launch {
+   741	            try {
+   742	                val effectiveSymbol = if (symbol == "ALL" || symbol.isBlank()) "${_uiState.value.activeSymbol}" else symbol
+   743	                android.widget.Toast.makeText(context, "Veriler indiriliyor... Lütfen bekleyin.", android.widget.Toast.LENGTH_SHORT).show()
+   744	                
+   745	                var currentEnd: Long = endTime
+   746	                val allKlinesList = mutableListOf<List<String>>()
+   747	                var apiError: String? = null
+   748	                val limitToFetch = 1000
+   749	                
+   750	                while (true) {
+   751	                    val result = repository.getKlines(symbol = effectiveSymbol, interval = interval, start = startTime, end = currentEnd, limit = limitToFetch)
+   752	                    
+   753	                    if (result.isSuccess) {
+   754	                        val klineResult = result.getOrNull()
+   755	                        val data = klineResult?.list ?: emptyList()
+   756	                        
+   757	                        if (data.isEmpty()) break
+   758	                        
+   759	                        // Bybit returns newest first. Let's filter just in case they return out of range.
+   760	                        val validData = data.filter { k -> 
+   761	                            val ts = k[0].toLongOrNull() ?: 0L
+   762	                            ts >= startTime && ts <= currentEnd
+   763	                
+   764	                        
+   765	                        if (validData.isEmpty()) break
+   766	                        
+   767	                        allKlinesList.addAll(validData)
+   768	                        
+   769	                        if (data.size < limitToFetch) {
+   770	                            // Reached the oldest available data
+   771	                            break
+   772	                
+   773	                        
+   774	                        // The oldest candle is the last one in the list
+   775	                        val oldestTimestamp = data.last()[0].toLongOrNull()
+   776	                        if (oldestTimestamp != null) {
+   777	                            if (oldestTimestamp <= startTime) break
+   778	                            currentEnd = oldestTimestamp - 1
+   779	                 else {
+   780	                            break
+   781	                
+   782	             else {
+   783	                        apiError = result.exceptionOrNull()?.message ?: "Bilinmeyen hata"
+   784	                        break
+   785	            
+   786	                    
+   787	                    // Small delay to prevent rate limit
+   788	                    kotlinx.coroutines.delay(250)
+   789	        
+   790	                
+   791	                if (allKlinesList.isEmpty()) {
+   792	                    if (apiError != null) {
+   793	                        android.widget.Toast.makeText(context, "Veri alınamadı: $apiError", android.widget.Toast.LENGTH_LONG).show()
+   794	             else {
+   795	                        android.widget.Toast.makeText(context, "Seçilen tarih aralığında veri bulunamadı", android.widget.Toast.LENGTH_SHORT).show()
+   796	            
+   797	         else {
+   798	                    val combinedResult = com.example.data.remote.model.KlineResult(
+   799	                        symbol = effectiveSymbol,
+   800	                        category = "spot",
+   801	                        list = allKlinesList
+   802	                    )
+   803	                    com.example.ui.components.KlineExporter.shareKlinesAsFile(context, combinedResult, effectiveSymbol, interval, format)
+   804	        
+   805	     catch (e: Exception) {
+   806	                android.util.Log.e("KlineExport", "Error exporting klines", e)
+   807	                android.widget.Toast.makeText(context, "Veri alınırken hata oluştu: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
+   808	    
+   809	
+   810	    }
+   811	
+   812	    fun clearLocalExchangeDatabase() {
+   813	        viewModelScope.launch(Dispatchers.IO) {
+   814	            repository.clearLocalExchangeTrades()
+   815	            _tradeAnalysis.update {
+   816	                it.copy(
+   817	                    analysis = null,
+   818	                    syncResult = null,
+   819	                    syncNotice = "Yerel borsa işlem veritabanı temizlendi."
+   820	                )
+   821	    
+   822	
+   823	    }
+   824	}
