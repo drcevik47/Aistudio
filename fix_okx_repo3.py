@@ -13,7 +13,7 @@ new_wallet = """    suspend fun getWalletBalance(): Result<Map<String, Double>> 
                 var fetchSuccess = false
                 var errorMsg = ""
                 
-                // 1. Try account/balance
+                // 1. Try account/balance (Trading / Unified account)
                 try {
                     val tradeRes = api.getBalance(ccyParam)
                     if (tradeRes.code == "0" && tradeRes.data.isNotEmpty()) {
@@ -22,7 +22,7 @@ new_wallet = """    suspend fun getWalletBalance(): Result<Map<String, Double>> 
                             map[detail.ccy] = (map[detail.ccy] ?: 0.0) + avail
                         }
                         fetchSuccess = true
-                        log(LogLevel.INFO, "OKX_API", "account/balance Başarılı: ${tradeRes.data}")
+                        log(LogLevel.INFO, "OKX_API", "account/balance Başarılı. OKX TR Al-Sat bakiye çekildi.")
                     } else {
                         errorMsg += "[account/balance: ${tradeRes.code} - ${tradeRes.msg}] "
                     }
@@ -30,36 +30,33 @@ new_wallet = """    suspend fun getWalletBalance(): Result<Map<String, Double>> 
                     errorMsg += "[account/balance Ağ Hatası: ${e.message}] "
                 }
 
-                // 2. Try asset/balances
-                try {
-                    val fundRes = api.getAssetBalances(ccyParam)
-                    if (fundRes.code == "0" && fundRes.data.isNotEmpty()) {
-                        // In asset/balances, data is a list of OkxBalanceDetail directly, but our OkxAccountBalance expects details.
-                        // Wait, if we use the same OkxResponse<OkxAccountBalance> for getAssetBalances, it will fail parsing 
-                        // if the schema is different. Let's just log success.
-                        fetchSuccess = true
-                        log(LogLevel.INFO, "OKX_API", "asset/balances Başarılı!")
-                        
-                        // We will add to map if map is empty
-                        if (map.isEmpty()) {
-                            // The schema for asset/balances is: data: [ { ccy: "BTC", availBal: "1" } ]
-                            // Wait, our OkxResponse expects data to be List<OkxAccountBalance>. This might crash.
+                // 2. Try asset/balances (Funding account)
+                if (!fetchSuccess || map.values.all { it == 0.0 }) {
+                    try {
+                        val fundRes = api.getAssetBalances(ccyParam)
+                        if (fundRes.code == "0" && fundRes.data.isNotEmpty()) {
+                            fundRes.data.forEach { asset ->
+                                val avail = asset.availBal.toDoubleOrNull() ?: 0.0
+                                map[asset.ccy] = (map[asset.ccy] ?: 0.0) + avail
+                            }
+                            fetchSuccess = true
+                            log(LogLevel.INFO, "OKX_API", "asset/balances Başarılı. OKX TR Fonlama bakiye çekildi.")
+                        } else {
+                            errorMsg += "[asset/balances: ${fundRes.code} - ${fundRes.msg}] "
                         }
-                    } else {
-                        errorMsg += "[asset/balances: ${fundRes.code} - ${fundRes.msg}] "
+                    } catch(e: Exception) {
+                        errorMsg += "[asset/balances Ağ Hatası: ${e.message}] "
                     }
-                } catch(e: Exception) {
-                    errorMsg += "[asset/balances Ağ Hatası: ${e.message}] "
                 }
                 
                 if (fetchSuccess) {
                     Result.success(map)
                 } else {
-                    log(LogLevel.ERROR, "OKX_API", "Tüm bakiye çekme denemeleri başarısız: $errorMsg")
+                    log(LogLevel.ERROR, "OKX_API", "Bakiye API Hatası: $errorMsg")
                     Result.failure(Exception(errorMsg))
                 }
             } catch (e: Exception) {
-                log(LogLevel.ERROR, "OKX_API", "Kritik Ağ Hatası: ${e.message}")
+                log(LogLevel.ERROR, "OKX_API", "Bakiye Kritik Ağ Hatası: ${e.message}")
                 Result.failure(e)
             }
         }

@@ -89,3 +89,10 @@ data class OkxFill(
     @Json(name = "ts") val ts: String = "",
     @Json(name = "execType") val execType: String = "" // T (Taker) or M (Maker)
 )
+
+
+@JsonClass(generateAdapter = true)
+data class OkxAssetBalance(
+    @Json(name = "ccy") val ccy: String = "",
+    @Json(name = "availBal") val availBal: String = "0"
+)

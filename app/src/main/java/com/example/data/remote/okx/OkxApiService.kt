@@ -20,7 +20,7 @@ interface OkxApiService {
     @GET("/api/v5/asset/balances")
     suspend fun getAssetBalances(
         @Query("ccy") ccy: String? = null
-    ): OkxResponse<OkxAccountBalance>
+    ): OkxResponse<OkxAssetBalance>
 
     // https://www.okx.com/api/v5/trade/order
     @POST("/api/v5/trade/order")
