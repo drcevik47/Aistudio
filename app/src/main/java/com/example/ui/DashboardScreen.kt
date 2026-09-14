@@ -469,45 +469,44 @@ fun DashboardScreen(
                         }
 
                         // Portfolio Status Card
-                        if (state.activeExchange == "BYBIT") {
-                            item(key = "portfolio_bybit") {
+                        item(key = "portfolio_card") {
+                            val isBybit = state.activeExchange == "BYBIT"
+                            val isOkx = state.activeExchange == "OKX" && viewModel.preferences.okxApiKey.isNotBlank()
+                            
+                            if (isBybit || isOkx) {
+                                val analysis = if (isBybit) state.portfolioAnalysis else state.okxPortfolioAnalysis
+                                val activeBaseCoin = if (isBybit) viewModel.preferences.bybitBaseCoin else viewModel.preferences.okxBaseCoin
+                                val currentPrice = if (isBybit) state.currentPrice else state.okxCurrentPrice
+                                val price24hChange = if (isBybit) state.price24hChange else state.okxPrice24hChange
+                                val isBotActive = if (isBybit) state.isBotActive else false
+                                val walletBalances = if (isBybit) state.walletBalances else state.okxWalletBalances
+                                val exchangeName = if (isBybit) "Bybit Unified" else "OKX TR"
+
                                 PortfolioCard(
-                                    analysis = state.portfolioAnalysis,
-                                    activeBaseCoin = viewModel.preferences.bybitBaseCoin,
-                                    currentPrice = state.currentPrice,
-                                    price24hChange = state.price24hChange,
-                                    isBotActive = state.isBotActive,
-                                    walletBalances = state.walletBalances,
+                                    analysis = analysis,
+                                    activeBaseCoin = activeBaseCoin,
+                                    currentPrice = currentPrice,
+                                    price24hChange = price24hChange,
+                                    isBotActive = isBotActive,
+                                    walletBalances = walletBalances,
                                     onManualRebalanceClick = {
-                                        viewModel.requestInitialRebalanceDialog()
+                                        if (isBybit) viewModel.requestInitialRebalanceDialog() else viewModel.executeOkxRebalance()
                                     },
-                                    exchangeName = "Bybit Unified"
+                                    exchangeName = exchangeName
                                 )
                             }
                         }
 
-                        if (state.activeExchange == "OKX" && viewModel.preferences.okxApiKey.isNotBlank()) {
-                            item(key = "portfolio_okx") {
-                                Spacer(modifier = Modifier.height(16.dp))
-                                PortfolioCard(
-                                    analysis = state.okxPortfolioAnalysis,
-                                    activeBaseCoin = viewModel.preferences.okxBaseCoin,
-                                    currentPrice = state.okxCurrentPrice,
-                                    price24hChange = state.okxPrice24hChange, // Or Okx specific if added
-                                    isBotActive = false, // Always allow manual rebalance for OKX
-                                    walletBalances = state.okxWalletBalances,
-                                    onManualRebalanceClick = {
-                                        viewModel.executeOkxRebalance()
-                                    },
-                                    exchangeName = "OKX TR"
-                                )
-                            }
-                            // OKX Grid Limit Orders Card
-                            item {
-                                ActiveOrdersCard(
-                                    gridPlan = state.okxGridPlan,
-                                    // Map OKX orders to BybitOrderDto just for UI display compatibility
-                                    activeOrders = state.okxActiveOrders.map { okxOrder ->
+                        item(key = "active_orders_card") {
+                            val isBybit = state.activeExchange == "BYBIT"
+                            val isOkx = state.activeExchange == "OKX" && viewModel.preferences.okxApiKey.isNotBlank()
+
+                            if (isBybit || isOkx) {
+                                val gridPlan = if (isBybit) state.gridPlan else state.okxGridPlan
+                                val activeOrders = if (isBybit) {
+                                    state.activeOrders
+                                } else {
+                                    state.okxActiveOrders.map { okxOrder ->
                                         com.example.data.remote.model.BybitOrderDto(
                                             orderId = okxOrder.ordId,
                                             orderLinkId = okxOrder.clOrdId,
@@ -522,42 +521,33 @@ fun DashboardScreen(
                                             createdTime = okxOrder.cTime,
                                             updatedTime = okxOrder.uTime
                                         )
-                                    },
-                                    currentPrice = state.okxCurrentPrice,
-                                    isBotActive = state.isOkxBotActive,
-                                    stepPercent = viewModel.preferences.okxStepPercent,
-                                    activeBaseCoin = viewModel.preferences.okxBaseCoin,
-                                    lastRebalancePrice = viewModel.preferences.okxLastRebalancePrice,
-                                    isLoading = state.isLoading,
-                                    onStartBot = { viewModel.startOkxBot() },
-                                    onStopBot = { viewModel.stopOkxBot() },
-                                    onCancelAllOrders = { viewModel.cancelAllOkxOrders() },
-                                    onEditBasePriceClick = { }, // Not implemented separately for OKX yet, skip
-                                    exchangeName = "OKX TR"
-                                )
-                            }
-                        }
+                                    }
+                                }
+                                val currentPrice = if (isBybit) state.currentPrice else state.okxCurrentPrice
+                                val isBotActive = if (isBybit) state.isBotActive else state.isOkxBotActive
+                                val stepPercent = if (isBybit) state.stepPercent else viewModel.preferences.okxStepPercent
+                                val activeBaseCoin = if (isBybit) viewModel.preferences.bybitBaseCoin else viewModel.preferences.okxBaseCoin
+                                val lastRebalancePrice = if (isBybit) viewModel.preferences.lastRebalancePrice else viewModel.preferences.okxLastRebalancePrice
+                                val exchangeName = if (isBybit) "Bybit Unified" else "OKX TR"
 
-                        if (state.activeExchange == "BYBIT") {
-                            // 24/7 Grid Limit Orders Card
-                            item {
                                 ActiveOrdersCard(
-                                    gridPlan = state.gridPlan,
-                                    activeOrders = state.activeOrders,
-                                    currentPrice = state.currentPrice,
-                                    isBotActive = state.isBotActive,
-                                    stepPercent = state.stepPercent,
-                                    activeBaseCoin = viewModel.preferences.bybitBaseCoin,
-                                    lastRebalancePrice = viewModel.preferences.lastRebalancePrice,
+                                    gridPlan = gridPlan,
+                                    activeOrders = activeOrders,
+                                    currentPrice = currentPrice,
+                                    isBotActive = isBotActive,
+                                    stepPercent = stepPercent,
+                                    activeBaseCoin = activeBaseCoin,
+                                    lastRebalancePrice = lastRebalancePrice,
                                     isLoading = state.isLoading,
-                                    onStartBot = { viewModel.startBot() },
-                                    onStopBot = { viewModel.stopBot() },
-                                    onCancelAllOrders = { viewModel.cancelAllOrders() },
-                                    onEditBasePriceClick = { showEditBasePriceDialog = true },
-                                    exchangeName = "Bybit Unified"
+                                    onStartBot = { if (isBybit) viewModel.startBot() else viewModel.startOkxBot() },
+                                    onStopBot = { if (isBybit) viewModel.stopBot() else viewModel.stopOkxBot() },
+                                    onCancelAllOrders = { if (isBybit) viewModel.cancelAllOrders() else viewModel.cancelAllOkxOrders() },
+                                    onEditBasePriceClick = { if (isBybit) showEditBasePriceDialog = true },
+                                    exchangeName = exchangeName
                                 )
                             }
-                            
+                        }    
+                        if (state.activeExchange == "BYBIT") {
                             // Simulator Card
                             item {
                                 Spacer(modifier = Modifier.height(16.dp))

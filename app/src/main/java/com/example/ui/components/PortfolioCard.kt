@@ -212,8 +212,8 @@ fun PortfolioCard(
             val usdtPct = analysis?.usdtPercent?.toFloat() ?: 50f
             val basePct = analysis?.basePercent?.toFloat() ?: 50f
 
-            val animatedUsdtPct by animateFloatAsState(targetValue = usdtPct.coerceIn(0f, 100f), animationSpec = androidx.compose.animation.core.tween(300), label = "usdt_bar")
-            val animatedBasePct by animateFloatAsState(targetValue = basePct.coerceIn(0f, 100f), animationSpec = androidx.compose.animation.core.tween(300), label = "mnt_bar")
+            val animatedUsdtPct = usdtPct.coerceIn(0f, 100f)
+            val animatedBasePct = basePct.coerceIn(0f, 100f)
 
             // USDT Progress Item
             Column(modifier = Modifier.fillMaxWidth()) {
