@@ -91,11 +91,15 @@ class OkxRepository(
                     val tradeRes = api.getBalance(null)
                     if (tradeRes.code == "0" && tradeRes.data.isNotEmpty()) {
                         tradeRes.data.first().details.forEach { detail ->
-                            val qty = detail.eq.toDoubleOrNull() ?: detail.availEq.toDoubleOrNull() ?: detail.availBal.toDoubleOrNull() ?: 0.0
-                            val usdEq = detail.eqUsd?.toDoubleOrNull() ?: 0.0
+                            val totalQty = detail.eq.toDoubleOrNull() ?: detail.availEq.toDoubleOrNull() ?: detail.availBal.toDoubleOrNull() ?: 0.0
+                            val availQty = detail.availEq.toDoubleOrNull() ?: detail.availBal.toDoubleOrNull() ?: 0.0
+                            val totalUsdEq = detail.eqUsd?.toDoubleOrNull() ?: 0.0
+                            
+                            val availUsdEq = if (totalQty > 0.0) totalUsdEq * (availQty / totalQty) else 0.0
+
                             val current = map[detail.ccy]
-                            val newQty = (current?.quantity ?: 0.0) + qty
-                            val newUsdEq = (current?.fiatValue ?: 0.0) + usdEq
+                            val newQty = (current?.quantity ?: 0.0) + availQty
+                            val newUsdEq = (current?.fiatValue ?: 0.0) + availUsdEq
                             map[detail.ccy] = AssetBalance(newQty, newUsdEq)
                         }
                         fetchSuccess = true
@@ -113,9 +117,9 @@ class OkxRepository(
                         val fundRes = api.getAssetBalances(null)
                         if (fundRes.code == "0" && fundRes.data.isNotEmpty()) {
                             fundRes.data.forEach { asset ->
-                                val qty = asset.bal.toDoubleOrNull() ?: asset.availBal.toDoubleOrNull() ?: 0.0
+                                val availQty = asset.availBal.toDoubleOrNull() ?: 0.0
                                 val current = map[asset.ccy]
-                                val newQty = (current?.quantity ?: 0.0) + qty
+                                val newQty = (current?.quantity ?: 0.0) + availQty
                                 // Asset balances don't typically have eqUsd, so we just carry over or use 0
                                 map[asset.ccy] = AssetBalance(newQty, current?.fiatValue ?: 0.0)
                             }

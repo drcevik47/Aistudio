@@ -253,9 +253,14 @@ class BybitRepository(
                 if (body != null && body.isSuccess) {
                     val balanceMap = mutableMapOf<String, AssetBalance>()
                     body.result?.list?.firstOrNull()?.coin?.forEach { coin ->
+                        val totalQty = coin.balanceValue
+                        val availQty = coin.availableValue
+                        val totalUsd = coin.fiatValue
+                        val availUsd = if (totalQty > 0.0) totalUsd * (availQty / totalQty) else 0.0
+
                         balanceMap[coin.coin.uppercase()] = AssetBalance(
-                            quantity = coin.balanceValue,
-                            fiatValue = coin.fiatValue
+                            quantity = availQty,
+                            fiatValue = availUsd
                         )
                     }
                     Result.success(balanceMap)
