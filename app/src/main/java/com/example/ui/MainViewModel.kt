@@ -99,8 +99,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         _uiState.update { 
             it.copy(
-                activeSymbol = preferences.bybitSymbol,
-                activeBaseCoin = preferences.bybitBaseCoin
+                activeSymbol = if (preferences.activeExchange == "OKX") preferences.okxSymbol else preferences.bybitSymbol,
+                activeBaseCoin = if (preferences.activeExchange == "OKX") preferences.okxBaseCoin else preferences.bybitBaseCoin
+            )
+        }
+    }
+
+    fun setActiveExchange(exchange: String) {
+        preferences.activeExchange = exchange
+        _uiState.update {
+            it.copy(
+                activeExchange = exchange,
+                activeBaseCoin = if (exchange == "OKX") preferences.okxBaseCoin else preferences.bybitBaseCoin,
+                activeSymbol = if (exchange == "OKX") preferences.okxSymbol else preferences.bybitSymbol
             )
         }
     }
@@ -113,9 +124,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             okxApiKey = preferences.okxApiKey,
             okxApiSecret = preferences.okxApiSecret,
             okxApiPassphrase = preferences.okxApiPassphrase,
-            activeExchange = "BYBIT", // default to Bybit for now
-            activeBaseCoin = preferences.bybitBaseCoin,
-            activeSymbol = preferences.bybitSymbol,
+            activeExchange = preferences.activeExchange,
+            activeBaseCoin = if (preferences.activeExchange == "OKX") preferences.okxBaseCoin else preferences.bybitBaseCoin,
+            activeSymbol = if (preferences.activeExchange == "OKX") preferences.okxSymbol else preferences.bybitSymbol,
             isTestnet = preferences.isTestnet,
             isBotActive = preferences.isBotActive,
             stepPercent = preferences.stepPercent,

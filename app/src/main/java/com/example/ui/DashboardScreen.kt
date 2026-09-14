@@ -1,4 +1,7 @@
 package com.example.ui
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.foundation.clickable
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -146,19 +149,47 @@ fun DashboardScreen(
             TopAppBar(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        var exchangeMenuExpanded by remember { mutableStateOf(false) }
                         Box(
                             modifier = Modifier
                                 .size(36.dp)
                                 .clip(RoundedCornerShape(10.dp))
-                                .background(MinimalPrimaryLight),
+                                .background(if (state.activeExchange == "OKX") MinimalSecondaryLight else MinimalPrimaryLight)
+                                .clickable { exchangeMenuExpanded = true },
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = "B",
+                                text = if (state.activeExchange == "OKX") "O" else "B",
                                 fontWeight = FontWeight.Black,
                                 fontSize = 18.sp,
-                                color = MinimalPrimary
+                                color = if (state.activeExchange == "OKX") MinimalSecondary else MinimalPrimary
                             )
+                            
+                            DropdownMenu(
+                                expanded = exchangeMenuExpanded,
+                                onDismissRequest = { exchangeMenuExpanded = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Bybit Unified") },
+                                    onClick = {
+                                        viewModel.setActiveExchange("BYBIT")
+                                        exchangeMenuExpanded = false
+                                    },
+                                    leadingIcon = { 
+                                        if (state.activeExchange == "BYBIT") Icon(Icons.Default.CheckCircle, null, tint = MinimalPrimary) 
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("OKX TR") },
+                                    onClick = {
+                                        viewModel.setActiveExchange("OKX")
+                                        exchangeMenuExpanded = false
+                                    },
+                                    leadingIcon = { 
+                                        if (state.activeExchange == "OKX") Icon(Icons.Default.CheckCircle, null, tint = MinimalPrimary) 
+                                    }
+                                )
+                            }
                         }
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {
@@ -438,21 +469,23 @@ fun DashboardScreen(
                         }
 
                         // Portfolio Status Card
-                        item {
-                            PortfolioCard(
-                                analysis = state.portfolioAnalysis,
-                                activeBaseCoin = viewModel.preferences.bybitBaseCoin,
-                                currentPrice = state.currentPrice,
-                                price24hChange = state.price24hChange,
-                                isBotActive = state.isBotActive,
-                                onManualRebalanceClick = {
-                                    viewModel.requestInitialRebalanceDialog()
-                                },
-                                exchangeName = "Bybit Unified"
-                            )
+                        if (state.activeExchange == "BYBIT") {
+                            item {
+                                PortfolioCard(
+                                    analysis = state.portfolioAnalysis,
+                                    activeBaseCoin = viewModel.preferences.bybitBaseCoin,
+                                    currentPrice = state.currentPrice,
+                                    price24hChange = state.price24hChange,
+                                    isBotActive = state.isBotActive,
+                                    onManualRebalanceClick = {
+                                        viewModel.requestInitialRebalanceDialog()
+                                    },
+                                    exchangeName = "Bybit Unified"
+                                )
+                            }
                         }
 
-                        if (viewModel.preferences.okxApiKey.isNotBlank()) {
+                        if (state.activeExchange == "OKX" && viewModel.preferences.okxApiKey.isNotBlank()) {
                             item {
                                 Spacer(modifier = Modifier.height(16.dp))
                                 PortfolioCard(
@@ -504,57 +537,65 @@ fun DashboardScreen(
                             }
                         }
 
-                        // 24/7 Grid Limit Orders Card
-                        item {
-                            ActiveOrdersCard(
-                                gridPlan = state.gridPlan,
-                                activeOrders = state.activeOrders,
-                                currentPrice = state.currentPrice,
-                                isBotActive = state.isBotActive,
-                                stepPercent = state.stepPercent,
-                                activeBaseCoin = viewModel.preferences.bybitBaseCoin,
-                                lastRebalancePrice = viewModel.preferences.lastRebalancePrice,
-                                isLoading = state.isLoading,
-                                onStartBot = { viewModel.startBot() },
-                                onStopBot = { viewModel.stopBot() },
-                                onCancelAllOrders = { viewModel.cancelAllOrders() },
-                                onEditBasePriceClick = { showEditBasePriceDialog = true },
-                                exchangeName = "Bybit Unified"
-                            )
-                        }
-                        
-                        // Simulator Card
-                        item {
-                            Spacer(modifier = Modifier.height(16.dp))
-                            com.example.ui.components.SimulationCard(
-                                currentUsdtBalance = state.portfolioAnalysis?.usdtBalance ?: 0.0,
-                                currentBaseBalance = state.portfolioAnalysis?.baseCoinBalance ?: 0.0,
-                                currentBasePrice = viewModel.preferences.lastRebalancePrice,
-                                stepPercent = state.stepPercent,
-                                activeBaseCoin = viewModel.preferences.bybitBaseCoin,
-                            )
+                        if (state.activeExchange == "BYBIT") {
+                            // 24/7 Grid Limit Orders Card
+                            item {
+                                ActiveOrdersCard(
+                                    gridPlan = state.gridPlan,
+                                    activeOrders = state.activeOrders,
+                                    currentPrice = state.currentPrice,
+                                    isBotActive = state.isBotActive,
+                                    stepPercent = state.stepPercent,
+                                    activeBaseCoin = viewModel.preferences.bybitBaseCoin,
+                                    lastRebalancePrice = viewModel.preferences.lastRebalancePrice,
+                                    isLoading = state.isLoading,
+                                    onStartBot = { viewModel.startBot() },
+                                    onStopBot = { viewModel.stopBot() },
+                                    onCancelAllOrders = { viewModel.cancelAllOrders() },
+                                    onEditBasePriceClick = { showEditBasePriceDialog = true },
+                                    exchangeName = "Bybit Unified"
+                                )
+                            }
+                            
+                            // Simulator Card
+                            item {
+                                Spacer(modifier = Modifier.height(16.dp))
+                                com.example.ui.components.SimulationCard(
+                                    currentUsdtBalance = state.portfolioAnalysis?.usdtBalance ?: 0.0,
+                                    currentBaseBalance = state.portfolioAnalysis?.baseCoinBalance ?: 0.0,
+                                    currentBasePrice = viewModel.preferences.lastRebalancePrice,
+                                    stepPercent = state.stepPercent,
+                                    activeBaseCoin = viewModel.preferences.bybitBaseCoin,
+                                )
+                            }
                         }
                     }
                 }
                 1 -> {
-                    TradeAnalysisScreen(
-                        state = tradeAnalysisState,
-                        isApiConfigured = state.isConfigured,
-                        currentPrice = state.currentPrice,
-                        activeBaseCoin = viewModel.preferences.bybitBaseCoin,
-                        activeSymbol = viewModel.preferences.bybitSymbol,
-                        onFetchAnalysis = { symbol, days, startTimestamp -> viewModel.fetchTradeAnalysis(symbol, days, startTimestamp) },
-                        onClearLocalDatabase = { viewModel.clearLocalExchangeDatabase() }
-                    )
+                    if (state.activeExchange == "OKX") {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text("OKX için işlem geçmişi analizi desteklenmemektedir.", color = MinimalTextSecondary)
+                        }
+                    } else {
+                        TradeAnalysisScreen(
+                            state = tradeAnalysisState,
+                            isApiConfigured = state.isConfigured,
+                            currentPrice = state.currentPrice,
+                            activeBaseCoin = viewModel.preferences.bybitBaseCoin,
+                            activeSymbol = viewModel.preferences.bybitSymbol,
+                            onFetchAnalysis = { symbol, days, startTimestamp -> viewModel.fetchTradeAnalysis(symbol, days, startTimestamp) },
+                            onClearLocalDatabase = { viewModel.clearLocalExchangeDatabase() }
+                        )
+                    }
                 }
                 2 -> {
                     OrderHistoryScreen(
-                        orders = orders,
-                        exchangeTrades = exchangeTrades,
+                        orders = orders.filter { it.exchange == state.activeExchange || (state.activeExchange == "OKX" && it.exchange == "OKX TR") },
+                        exchangeTrades = exchangeTrades.filter { it.exchange == state.activeExchange || (state.activeExchange == "OKX" && it.exchange == "OKX TR") },
                         liveAnalysis = liveAnalysis,
-                        currentPrice = state.currentPrice,
-                        activeBaseCoin = viewModel.preferences.bybitBaseCoin,
-                        activeSymbol = viewModel.preferences.bybitSymbol,
+                        currentPrice = if (state.activeExchange == "OKX") state.okxCurrentPrice else state.currentPrice,
+                        activeBaseCoin = if (state.activeExchange == "OKX") viewModel.preferences.okxBaseCoin else viewModel.preferences.bybitBaseCoin,
+                        activeSymbol = if (state.activeExchange == "OKX") viewModel.preferences.okxSymbol else viewModel.preferences.bybitSymbol,
                         onClearOrders = { viewModel.clearOrders() },
                         onClearExchangeTrades = { viewModel.clearLocalExchangeDatabase() },
                         onExportKlines = { symbol, interval, format, start, end, context ->
@@ -564,7 +605,7 @@ fun DashboardScreen(
                 }
                 3 -> {
                     LogViewerScreen(
-                        logs = logs,
+                        logs = logs.filter { it.exchange == state.activeExchange || (state.activeExchange == "OKX" && it.exchange == "OKX TR") },
                         onClearLogs = { viewModel.clearLogs() }
                     )
                 }

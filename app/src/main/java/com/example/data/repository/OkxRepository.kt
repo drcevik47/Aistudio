@@ -353,7 +353,7 @@ class OkxRepository(
                 } else {
                     orderDao.insertOrder(
                         com.example.data.local.entity.OrderEntity(
-                            exchange = "OKX TR",
+                            exchange = "OKX",
                             orderId = orderId,
                             side = side,
                             orderType = "Limit",
@@ -378,7 +378,7 @@ class OkxRepository(
                         val execId = if (orderId.isNotBlank()) "fill_$orderId" else "fill_$effectiveTime"
                         exchangeTradeDao.insertTrade(
                             com.example.data.local.entity.ExchangeTradeEntity(
-                                exchange = "OKX TR",
+                                exchange = "OKX",
                                 execId = execId,
                                 orderId = orderId,
                                 symbol = preferences.okxSymbol,
@@ -427,7 +427,7 @@ class OkxRepository(
                 if (newFills.isNotEmpty()) {
                     val entitiesToInsert = newFills.map { fill ->
                         com.example.data.local.entity.ExchangeTradeEntity(
-                            exchange = "OKX TR",
+                            exchange = "OKX",
                             execId = fill.billId.ifBlank { fill.ordId },
                             orderId = fill.ordId,
                             symbol = fill.instId,

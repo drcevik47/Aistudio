@@ -38,6 +38,10 @@ class BotPreferences(context: Context) {
         get() = prefs.getString(KEY_OKX_SYMBOL, "BTC-USDT") ?: "BTC-USDT"
         set(value) = prefs.edit().putString(KEY_OKX_SYMBOL, value.trim().uppercase()).apply()
 
+    var activeExchange: String
+        get() = prefs.getString(KEY_ACTIVE_EXCHANGE, "BYBIT") ?: "BYBIT"
+        set(value) = prefs.edit().putString(KEY_ACTIVE_EXCHANGE, value).apply()
+
     var okxBaseCoin: String
         get() = prefs.getString(KEY_OKX_BASE_COIN, "BTC") ?: "BTC"
         set(value) = prefs.edit().putString(KEY_OKX_BASE_COIN, value.trim().uppercase()).apply()
@@ -143,5 +147,6 @@ class BotPreferences(context: Context) {
         private const val KEY_ACTIVE_SELL_ORDER_ID = "active_sell_order_id"
         private const val KEY_LAST_REBALANCE_PRICE = "last_rebalance_price"
         private const val KEY_LAST_REBALANCE_PRICE_STR = "last_rebalance_price_str"
+        private const val KEY_ACTIVE_EXCHANGE = "active_exchange"
     }
 }
