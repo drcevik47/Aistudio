@@ -21,6 +21,7 @@ import com.example.bot.RebalanceEngine
 import com.example.data.local.BotPreferences
 import com.example.data.local.entity.LogLevel
 import com.example.data.remote.BybitWebSocketClient
+import com.example.data.remote.okx.OkxWebSocketClient
 import com.example.data.remote.model.BybitOrderDto
 import com.example.data.repository.BybitRepository
 import kotlinx.coroutines.CancellationException
@@ -42,6 +43,7 @@ class TradingBotService : Service() {
     private lateinit var repository: BybitRepository
     private lateinit var okxRepository: com.example.data.repository.OkxRepository
     private lateinit var wsClient: BybitWebSocketClient
+    private lateinit var okxWsClient: OkxWebSocketClient
     private lateinit var database: com.example.data.local.AppDatabase
     private var pollingJob: Job? = null
     private var isBotLoopRunning = AtomicBoolean(false)
@@ -57,6 +59,14 @@ class TradingBotService : Service() {
         okxRepository = app.okxRepository
         database = app.database
         wsClient = BybitWebSocketClient(serviceScope)
+        okxWsClient = OkxWebSocketClient(
+            scope = serviceScope,
+            apiKey = preferences.okxApiKey,
+            apiSecret = preferences.okxApiSecret,
+            passphrase = preferences.okxApiPassphrase,
+            isTestnet = preferences.isTestnet,
+            activeSymbol = preferences.okxSymbol
+        )
         createNotificationChannels()
         acquireWakeLock()
     }
@@ -112,11 +122,10 @@ class TradingBotService : Service() {
 
     private fun startBot() {
         if (isBotLoopRunning.getAndSet(true)) return
-        preferences.isBotActive = true
 
         serviceScope.launch {
             val offset = repository.syncServerTime(preferences.isTestnet)
-            repository.log(LogLevel.INFO, "BotService", "7/24 Bybit Ticaret Botu başlatıldı (Zaman farkı: $offset ms)")
+            repository.log(LogLevel.INFO, "BotService", "7/24 Ticaret Botu başlatıldı (Zaman farkı: $offset ms)")
 
             wsClient.connect(
                 key = preferences.apiKey,
@@ -124,6 +133,8 @@ class TradingBotService : Service() {
                 testnet = preferences.isTestnet,
                 timeOffsetMs = offset
             )
+
+            okxWsClient.start()
 
             launch {
                 wsClient.priceUpdates.collect { price ->
@@ -134,8 +145,20 @@ class TradingBotService : Service() {
             }
 
             launch {
+                okxWsClient.priceUpdates.collect { price ->
+                    // Just keeping track of connection if needed
+                }
+            }
+
+            launch {
                 wsClient.orderUpdates.collect { order ->
                     handleOrderUpdate(order)
+                }
+            }
+
+            launch {
+                okxWsClient.orderUpdates.collect { order ->
+                    handleOkxOrderUpdate(order)
                 }
             }
 
@@ -143,7 +166,13 @@ class TradingBotService : Service() {
                 while (isActive && isBotLoopRunning.get()) {
                     delay(30000)
                     try {
-                        repository.syncUnfilledOrdersWithExchange()
+                        if (preferences.isBotActive) {
+                            repository.syncUnfilledOrdersWithExchange()
+                        }
+                        if (preferences.isOkxBotActive) {
+                            // Okx polling fallback if WS misses
+                            okxRepository.getPendingOrders()
+                        }
                     } catch (e: Exception) {
                         // ignore
                     }
@@ -194,6 +223,23 @@ class TradingBotService : Service() {
                 cycleCount++
                 delay(4000)
             }
+        }
+    }
+
+    private suspend fun handleOkxOrderUpdate(order: com.example.data.remote.okx.model.OkxOrderDetails) {
+        if (preferences.isOkxBotActive && order.state == "filled") {
+            val fillPrice = order.avgPx.toDoubleOrNull() ?: order.px.toDoubleOrNull() ?: 0.0
+            val fillQty = order.accFillSz.toDoubleOrNull() ?: order.sz.toDoubleOrNull() ?: 0.0
+            
+            okxRepository.reconcileGridOrders(callerTag = "OkxWebSocket")
+            
+            val notifId = ALERT_NOTIFICATION_ID_BASE + 500 + (order.ordId.hashCode() and 0x3FFFFFFF) % 500
+            sendAlertNotification(
+                "OKX ${order.side.uppercase()} Limit Emri Gerçekleşti!",
+                "${order.side.uppercase()} $fillQty ${preferences.okxBaseCoin} @ $fillPrice USDT. Yeni OKX ızgara kuruldu.",
+                false,
+                notificationId = notifId
+            )
         }
     }
 
@@ -297,13 +343,15 @@ class TradingBotService : Service() {
     }
 
     private fun stopBot() {
-        isBotLoopRunning.set(false)
-        preferences.isBotActive = false
-        pollingJob?.cancel()
-        cancelKeepAliveAlarm()
-        wsClient.stop()
-        serviceScope.launch {
-            repository.log(LogLevel.INFO, "BotService", "Bot durduruldu")
+        if (!preferences.isBotActive && !preferences.isOkxBotActive) {
+            isBotLoopRunning.set(false)
+            pollingJob?.cancel()
+            cancelKeepAliveAlarm()
+            wsClient.stop()
+            okxWsClient.stop()
+            serviceScope.launch {
+                repository.log(LogLevel.INFO, "BotService", "Tüm botlar durduruldu")
+            }
         }
     }
 

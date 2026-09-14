@@ -498,7 +498,8 @@ fun DashboardScreen(
                                     onStartBot = { viewModel.startOkxBot() },
                                     onStopBot = { viewModel.stopOkxBot() },
                                     onCancelAllOrders = { viewModel.cancelAllOkxOrders() },
-                                    onEditBasePriceClick = { } // Not implemented separately for OKX yet, skip
+                                    onEditBasePriceClick = { }, // Not implemented separately for OKX yet, skip
+                                    exchangeName = "OKX TR"
                                 )
                             }
                         }
@@ -517,7 +518,8 @@ fun DashboardScreen(
                                 onStartBot = { viewModel.startBot() },
                                 onStopBot = { viewModel.stopBot() },
                                 onCancelAllOrders = { viewModel.cancelAllOrders() },
-                                onEditBasePriceClick = { showEditBasePriceDialog = true }
+                                onEditBasePriceClick = { showEditBasePriceDialog = true },
+                                exchangeName = "Bybit Unified"
                             )
                         }
                         

@@ -77,6 +77,7 @@ fun ActiveOrdersCard(
     onStopBot: () -> Unit,
     onCancelAllOrders: () -> Unit,
     onEditBasePriceClick: () -> Unit = {},
+    exchangeName: String = "Bybit",
     modifier: Modifier = Modifier
 ) {
     Card(
@@ -120,7 +121,7 @@ fun ActiveOrdersCard(
                     Spacer(modifier = Modifier.width(10.dp))
                     Column {
                         Text(
-                            text = "Grid Emirleri (±%$stepPercent)",
+                            text = "$exchangeName Grid (±%$stepPercent)",
                             fontWeight = FontWeight.Bold,
                             fontSize = 14.sp,
                             color = MinimalTextPrimary,

@@ -612,6 +612,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             preferences.isOkxBotActive = false
             preferences.okxActiveBuyOrderId = ""
             preferences.okxActiveSellOrderId = ""
+            
+            if (!preferences.isBotActive) {
+                com.example.service.TradingBotService.stop(getApplication())
+            }
+
             // We cancel the specific OKX active orders
             val pendingRes = okxRepository.getPendingOrders()
             pendingRes.onSuccess { list ->
@@ -666,7 +671,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun stopBot() {
         preferences.isBotActive = false
         preferences.lastRebalancePrice = 0.0
-        TradingBotService.stop(getApplication())
+        
+        if (!preferences.isOkxBotActive) {
+            TradingBotService.stop(getApplication())
+        }
         
         viewModelScope.launch(Dispatchers.IO) {
             repository.log(LogLevel.INFO, "System", "Bot durduruldu")
