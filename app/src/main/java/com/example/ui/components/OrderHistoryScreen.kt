@@ -1632,7 +1632,9 @@ private fun OrderItemCard(
                             fontSize = 12.sp,
                             color = sideColor,
                             maxLines = 1,
-                            softWrap = false
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
                         )
                         Spacer(modifier = Modifier.width(5.dp))
                         Surface(
