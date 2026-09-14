@@ -58,6 +58,11 @@ data class MainUiState(
     val baseCoinBalance: Double = 0.0,
     val portfolioAnalysis: PortfolioAnalysis? = null,
     val gridPlan: GridOrdersPlan? = null,
+    val okxCurrentPrice: Double = 0.0,
+    val okxPrice24hChange: Double = 0.0,
+    val okxUsdtBalance: Double = 0.0,
+    val okxBaseCoinBalance: Double = 0.0,
+    val okxPortfolioAnalysis: PortfolioAnalysis? = null,
     val activeOrders: List<BybitOrderDto> = emptyList(),
     val stepPercent: Double = 2.0,
     val lastRebalancePrice: Double = 0.0,
@@ -72,6 +77,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application as BybitBotApp
     val preferences = app.preferences
     private val repository = app.repository
+    private val okxRepository = app.okxRepository
     private val database = app.database
 
     fun updateSymbols(bybitSymbol: String, okxSymbol: String) {
@@ -226,7 +232,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 stepPercent = _uiState.value.stepPercent
             )
 
+
+
+            fetchOkxData()
             _uiState.update {
+
                 it.copy(
                     currentPrice = currentPrice,
                     price24hChange = priceChange,
@@ -371,6 +381,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     !preferences.isBotActive &&
                     analysis.deltaUsdt >= 1.0
 
+            fetchOkxData()
             _uiState.update {
                 it.copy(
                     isLoading = false,
@@ -383,9 +394,47 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     activeOrders = openOrders,
                     isBotActive = preferences.isBotActive,
                     lastRebalancePrice = preferences.lastRebalancePrice,
-                    showInitialRebalanceDialog = shouldShowInitialDialog
+                    showInitialRebalanceDialog = shouldShowInitialDialog,
                 )
             }
+        }
+    }
+
+
+    private suspend fun fetchOkxData() {
+        if (preferences.okxApiKey.isBlank()) return
+        
+        var okxCurrentPrice = _uiState.value.okxCurrentPrice
+        var okxUsdt = _uiState.value.okxUsdtBalance
+        var okxBaseQty = _uiState.value.okxBaseCoinBalance
+        var okxAnalysis = _uiState.value.okxPortfolioAnalysis
+
+        val okxTickerRes = okxRepository.getTicker()
+        okxTickerRes.onSuccess { ticker ->
+            okxCurrentPrice = ticker.last.toDoubleOrNull() ?: 0.0
+        }
+
+        val okxBalanceRes = okxRepository.getWalletBalance()
+        okxBalanceRes.onSuccess { map ->
+            okxUsdt = map["USDT"] ?: 0.0
+            okxBaseQty = map[preferences.okxBaseCoin] ?: 0.0
+        }
+
+        if (okxCurrentPrice > 0.0) {
+            okxAnalysis = RebalanceEngine.analyzePortfolio(
+                usdtBalance = okxUsdt,
+                baseCoinBalance = okxBaseQty,
+                currentPrice = okxCurrentPrice
+            )
+        }
+
+        _uiState.update {
+            it.copy(
+                okxCurrentPrice = okxCurrentPrice,
+                okxUsdtBalance = okxUsdt,
+                okxBaseCoinBalance = okxBaseQty,
+                okxPortfolioAnalysis = okxAnalysis
+            )
         }
     }
 

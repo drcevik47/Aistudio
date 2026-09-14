@@ -57,6 +57,43 @@ class OkxRepository(
             .create(OkxApiService::class.java)
     }
 
+
+    suspend fun getTicker(): Result<OkxTicker> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val api = createApiService()
+                val response = api.getTicker(preferences.okxSymbol)
+                if (response.code == "0" && response.data.isNotEmpty()) {
+                    Result.success(response.data.first())
+                } else {
+                    Result.failure(Exception(response.msg))
+                }
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
+    }
+
+    suspend fun getWalletBalance(): Result<Map<String, Double>> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val api = createApiService()
+                val response = api.getBalance("${preferences.okxBaseCoin},USDT")
+                if (response.code == "0" && response.data.isNotEmpty()) {
+                    val map = mutableMapOf<String, Double>()
+                    response.data.first().details.forEach { detail ->
+                        map[detail.ccy] = detail.availEq.toDoubleOrNull() ?: 0.0
+                    }
+                    Result.success(map)
+                } else {
+                    Result.failure(Exception(response.msg))
+                }
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
+    }
+
     suspend fun log(level: LogLevel, tag: String, message: String, details: String = "") {
         withContext(Dispatchers.IO) {
             database.logDao().insertLog(

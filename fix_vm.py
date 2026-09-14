@@ -3,88 +3,70 @@ import re
 with open("app/src/main/java/com/example/ui/MainViewModel.kt", "r") as f:
     lines = f.readlines()
 
-new_lines = []
-for i, line in enumerate(lines):
-    # Fix init block
-    if "repository.syncUnfilledOrdersWithExchange()" in line and "init {" in "".join(lines[max(0, i-10):i]):
-        new_lines.append(line)
-        new_lines.append("            }\n")
+out = []
+i = 0
+while i < len(lines):
+    line = lines[i]
+    if "var okxCurrentPrice = _uiState.value.okxCurrentPrice" in line:
+        i += 25
         continue
-    if "refreshData()" in line and "init {" in "".join(lines[max(0, i-15):i]) and "else {" in lines[i+1]:
-        new_lines.append(line)
-        new_lines.append("        } else {\n")
+    if "okxCurrentPrice = okxCurrentPrice" in line:
+        i += 4
         continue
-    if "else {" in line and "init {" in "".join(lines[max(0, i-15):i]) and "refreshData()" in lines[i-1]:
-        continue # skip the original else since we added it
-    if "repository.pruneLogs()" in line and "else {" in "".join(lines[max(0, i-5):i]):
-        new_lines.append(line)
-        new_lines.append("            }\n")
-        new_lines.append("        }\n")
-        continue
+    out.append(line)
+    i += 1
 
-    # Fix silentRefresh
-    if "cycleCount++" in line and "silentRefresh" in "".join(lines[max(0, i-10):i]):
-        new_lines.append(line)
-        new_lines.append("                }\n")
-        new_lines.append("            }\n")
-        new_lines.append("        }\n")
-        continue
-    if "repository.syncUnfilledOrdersWithExchange()" in line and "silentRefresh" in "".join(lines[max(0, i-20):i]) and "cycleCount % 4" in lines[i-1]:
-        new_lines.append(line)
-        new_lines.append("            }\n")
-        continue
-    if "repository.pruneLogs()" in line and "silentRefresh" in "".join(lines[max(0, i-30):i]) and "cycleCount % 30" in lines[i-1]:
-        new_lines.append(line)
-        new_lines.append("            }\n")
-        continue
-    if "priceChange = ticker.changePercent24h" in line and "tickerRes.onSuccess" in "".join(lines[max(0, i-3):i]):
-        new_lines.append(line)
-        new_lines.append("            }\n")
-        continue
-    if "baseQty = map[_uiState.value.activeBaseCoin] ?: 0.0" in line and "balanceRes.onSuccess" in "".join(lines[max(0, i-3):i]):
-        new_lines.append(line)
-        new_lines.append("                }\n")
-        new_lines.append("            }\n")
-        continue
-    if "openOrders = list" in line and "openOrdersRes.onSuccess" in "".join(lines[max(0, i-3):i]):
-        new_lines.append(line)
-        new_lines.append("                }\n")
-        new_lines.append("            }\n")
-        continue
+content = "".join(out)
 
-    if "lastRebalancePrice = preferences.lastRebalancePrice" in line and "isBotActive = preferences.isBotActive" in lines[i-1]:
-        new_lines.append(line)
-        new_lines.append("                )\n")
-        new_lines.append("            }\n")
-        continue
-    if "currentPrice" in line.strip() and "anchorBasePrice =" in lines[i-1]:
-        new_lines.append(line)
-        new_lines.append("            }\n")
-        continue
+# Now, we will add the OKX fetching logic cleanly into a new method `fetchOkxData()`
+# and call it from silentRefresh and refreshData. Wait, they are suspend functions.
 
-    if "statusMessage = \"OKX TR API bilgileri başarıyla kaydedildi\"" in line:
-        new_lines.append(line)
-        new_lines.append("                )\n")
-        new_lines.append("            }\n")
-        new_lines.append("        }\n")
-        continue
+okx_helper = """
+    private suspend fun fetchOkxData() {
+        if (preferences.okxApiKey.isBlank()) return
+        
+        var okxCurrentPrice = _uiState.value.okxCurrentPrice
+        var okxUsdt = _uiState.value.okxUsdtBalance
+        var okxBaseQty = _uiState.value.okxBaseCoinBalance
+        var okxAnalysis = _uiState.value.okxPortfolioAnalysis
 
-    if "showApiKeyDialog = false" in line and "isTestnet = testnet" in lines[i-1]:
-        new_lines.append(line)
-        new_lines.append("                )\n")
-        new_lines.append("            }\n")
-        continue
+        val okxTickerRes = okxRepository.getTicker()
+        okxTickerRes.onSuccess { ticker ->
+            okxCurrentPrice = ticker.last.toDoubleOrNull() ?: 0.0
+        }
 
-    if "refreshData()" in line and "saveApiCredentials" in "".join(lines[max(0, i-15):i]):
-        new_lines.append(line)
-        new_lines.append("        }\n")
-        continue
+        val okxBalanceRes = okxRepository.getWalletBalance()
+        okxBalanceRes.onSuccess { map ->
+            okxUsdt = map["USDT"] ?: 0.0
+            okxBaseQty = map[preferences.okxBaseCoin] ?: 0.0
+        }
 
-    if "refreshData()" in line and "silentRefresh" in "".join(lines[max(0, i-30):i]):
-        # wait, that's inside refreshData...
-        pass
-    
-    new_lines.append(line)
+        if (okxCurrentPrice > 0.0) {
+            okxAnalysis = RebalanceEngine.analyzePortfolio(
+                usdtBalance = okxUsdt,
+                baseCoinBalance = okxBaseQty,
+                currentPrice = okxCurrentPrice
+            )
+        }
 
-with open("app/src/main/java/com/example/ui/MainViewModel.tmp", "w") as f:
-    f.writelines(new_lines)
+        _uiState.update {
+            it.copy(
+                okxCurrentPrice = okxCurrentPrice,
+                okxUsdtBalance = okxUsdt,
+                okxBaseCoinBalance = okxBaseQty,
+                okxPortfolioAnalysis = okxAnalysis
+            )
+        }
+    }
+"""
+
+content = content.replace("    private fun recalculateGridPlan() {", okx_helper + "\n    private fun recalculateGridPlan() {")
+
+# Call fetchOkxData() in silentRefresh
+content = content.replace("            _uiState.update {\n\n                it.copy(\n                    currentPrice = currentPrice,", "            fetchOkxData()\n            _uiState.update {\n\n                it.copy(\n                    currentPrice = currentPrice,")
+
+# Call fetchOkxData() in refreshData
+content = content.replace("            _uiState.update {\n                it.copy(\n                    isLoading = false,\n                    currentPrice = currentPrice,", "            fetchOkxData()\n            _uiState.update {\n                it.copy(\n                    isLoading = false,\n                    currentPrice = currentPrice,")
+
+with open("app/src/main/java/com/example/ui/MainViewModel.kt", "w") as f:
+    f.write(content)

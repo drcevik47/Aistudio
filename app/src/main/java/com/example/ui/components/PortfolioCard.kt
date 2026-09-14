@@ -67,7 +67,8 @@ fun PortfolioCard(
     price24hChange: Double,
     isBotActive: Boolean,
     onManualRebalanceClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    exchangeName: String = "Bybit Unified"
 ) {
     Card(
         modifier = modifier
@@ -111,7 +112,7 @@ fun PortfolioCard(
                     color = MinimalPrimaryLight
                 ) {
                     Text(
-                        text = "Bybit Unified",
+                        text = exchangeName,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         color = MinimalPrimaryDark,
