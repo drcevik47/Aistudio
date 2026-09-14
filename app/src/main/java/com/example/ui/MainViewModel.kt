@@ -782,11 +782,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
             )
+            
+            // Also sync OKX if configured
+            var okxAdded = 0
+            if (preferences.okxApiKey.isNotBlank()) {
+                _tradeAnalysis.update { it.copy(progressText = "OKX işlemleri çekiliyor...") }
+                val okxResult = app.okxRepository.syncTradesFromExchange(
+                    symbol = preferences.okxSymbol,
+                    daysBack = daysBack,
+                    startTimestamp = startTimestamp
+                )
+                okxAdded = okxResult.getOrNull()?.newlyAddedCount ?: 0
+            }
+            
             result.onSuccess { syncRes ->
-                val notice = if (syncRes.newlyAddedCount > 0) {
-                    "✓ ${syncRes.totalFetched} işlem tarandı. ${syncRes.newlyAddedCount} YENİ işlem veritabanına eklendi! (Toplam DB: ${syncRes.totalInDb})"
+                val totalAdded = syncRes.newlyAddedCount + okxAdded
+                val notice = if (totalAdded > 0) {
+                    "✓ İşlemler tarandı. Bybit: ${syncRes.newlyAddedCount}, OKX: $okxAdded YENİ işlem eklendi!"
                 } else {
-                    "✓ ${syncRes.totalFetched} işlem tarandı. Tüm işlemler zaten veritabanında kayıtlı (Yeni işlem yok)."
+                    "✓ İşlemler tarandı. Tüm işlemler zaten veritabanında kayıtlı (Yeni işlem yok)."
                 }
                 _tradeAnalysis.update {
                     it.copy(

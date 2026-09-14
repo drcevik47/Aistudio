@@ -230,6 +230,16 @@ class TradingBotService : Service() {
         if (preferences.isOkxBotActive && order.state == "filled") {
             val fillPrice = order.avgPx.toDoubleOrNull() ?: order.px.toDoubleOrNull() ?: 0.0
             val fillQty = order.accFillSz.toDoubleOrNull() ?: order.sz.toDoubleOrNull() ?: 0.0
+            val fillTime = order.uTime.toLongOrNull() ?: System.currentTimeMillis()
+            
+            okxRepository.recordOrderFilled(
+                orderId = order.ordId,
+                side = order.side.replaceFirstChar { it.uppercase() },
+                price = fillPrice,
+                qty = fillQty,
+                triggerReason = if (order.side.equals("buy", ignoreCase = true)) "GridStepDownBuy" else "GridStepUpSell",
+                fillTime = fillTime
+            )
             
             okxRepository.reconcileGridOrders(callerTag = "OkxWebSocket")
             

@@ -2479,28 +2479,6 @@ private fun TradeAnalysisEmptyState(
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                 lineHeight = 18.sp
             )
-
-            if (isApiConfigured) {
-                val buttonText = if (selectedStartDateMillis != null) {
-                    val dateFormatted = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date(selectedStartDateMillis))
-                    "İşlem Geçmişini Şimdi Çek ($dateFormatted İtibaren)"
-                } else {
-                    "İşlem Geçmişini Şimdi Çek ($selectedDaysBack Gün)"
-                }
-                Button(
-                    onClick = onFetchAnalysis,
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = MinimalPrimary)
-                ) {
-                    Icon(
-                        Icons.Default.CloudDownload,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(buttonText, fontWeight = FontWeight.Bold)
-                }
-            }
         }
     }
 }

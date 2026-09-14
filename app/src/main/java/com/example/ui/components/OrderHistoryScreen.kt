@@ -1627,7 +1627,7 @@ private fun OrderItemCard(
                             .padding(end = 6.dp)
                     ) {
                         Text(
-                            text = "${if (isBuy) "ALIŞ" else "SATIŞ"} ($displayPair)",
+                            text = "${order.exchange} • ${if (isBuy) "ALIŞ" else "SATIŞ"} ($displayPair)",
                             fontWeight = FontWeight.Bold,
                             fontSize = 12.sp,
                             color = sideColor,

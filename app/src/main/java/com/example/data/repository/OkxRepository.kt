@@ -7,6 +7,8 @@ import com.example.data.local.entity.ExchangeTradeEntity
 import com.example.data.local.entity.LogEntity
 import com.example.data.local.entity.LogLevel
 import com.example.data.local.entity.OrderEntity
+import androidx.room.withTransaction
+import com.example.data.remote.model.TradeSyncResult
 import com.example.data.remote.okx.OkxApiService
 import com.example.data.remote.okx.OkxAuthInterceptor
 import com.example.data.remote.okx.model.*
@@ -324,6 +326,140 @@ class OkxRepository(
                     details = details
                 )
             )
+        }
+    }
+    suspend fun recordOrderFilled(
+        orderId: String,
+        side: String,
+        price: Double,
+        qty: Double = 0.0,
+        triggerReason: String = "",
+        fillTime: Long = System.currentTimeMillis()
+    ) = withContext(Dispatchers.IO) {
+        try {
+            database.withTransaction {
+                val effectiveTime = if (fillTime > 0L) fillTime else System.currentTimeMillis()
+                val orderDao = database.orderDao()
+                val exchangeTradeDao = database.exchangeTradeDao()
+                val existing = orderDao.getOrderByOrderId(orderId)
+                if (existing != null) {
+                    orderDao.updateOrderStatus(
+                        orderId = orderId,
+                        status = "Filled",
+                        filledQty = if (qty > 0.0) qty else existing.qty,
+                        avgPrice = if (price > 0.0) price else existing.price,
+                        fillTime = effectiveTime
+                    )
+                } else {
+                    orderDao.insertOrder(
+                        com.example.data.local.entity.OrderEntity(
+                            exchange = "OKX TR",
+                            orderId = orderId,
+                            side = side,
+                            orderType = "Limit",
+                            price = price,
+                            qty = qty,
+                            status = "Filled",
+                            filledQty = qty,
+                            avgPrice = price,
+                            timestamp = effectiveTime,
+                            triggerReason = triggerReason
+                        )
+                    )
+                }
+
+                val alreadyInTrades = if (orderId.isNotBlank()) exchangeTradeDao.hasTradeForOrder(orderId) else false
+                if (!alreadyInTrades) {
+                    val execPrice = if (price > 0.0) price else existing?.price ?: 0.0
+                    val execQty = if (qty > 0.0) qty else existing?.qty ?: 0.0
+                    if (execPrice > 0.0 && execQty > 0.0) {
+                        val execValue = execPrice * execQty
+                        val execFee = execValue * 0.001
+                        val execId = if (orderId.isNotBlank()) "fill_$orderId" else "fill_$effectiveTime"
+                        exchangeTradeDao.insertTrade(
+                            com.example.data.local.entity.ExchangeTradeEntity(
+                                exchange = "OKX TR",
+                                execId = execId,
+                                orderId = orderId,
+                                symbol = preferences.okxSymbol,
+                                side = side,
+                                orderPrice = execPrice,
+                                orderQty = execQty,
+                                orderType = "Limit",
+                                execPrice = execPrice,
+                                execQty = execQty,
+                                execValue = execValue,
+                                execFee = execFee,
+                                timeMillis = effectiveTime,
+                                isMaker = true
+                            )
+                        )
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("OkxRepository", "recordOrderFilled error: ${e.message}")
+        }
+    }
+    suspend fun syncTradesFromExchange(
+        symbol: String? = null,
+        daysBack: Int = 30,
+        startTimestamp: Long? = null
+    ): Result<TradeSyncResult> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val api = createApiService()
+                val targetSymbol = symbol ?: preferences.okxSymbol
+                // We'll just fetch recent fills history as OKX provides it
+                val response = api.getFillsHistory(instId = targetSymbol, limit = 100)
+                
+                if (response.code != "0") {
+                    return@withContext Result.failure(Exception("${response.code} - ${response.msg}"))
+                }
+                
+                val remoteFills = response.data ?: emptyList()
+                val exchangeTradeDao = database.exchangeTradeDao()
+                val existingExecIds = exchangeTradeDao.getAllExecIds().toHashSet()
+                val existingInDbCount = existingExecIds.size
+                
+                val newFills = remoteFills.filter { !existingExecIds.contains(it.billId) && !existingExecIds.contains(it.ordId) }
+                
+                if (newFills.isNotEmpty()) {
+                    val entitiesToInsert = newFills.map { fill ->
+                        com.example.data.local.entity.ExchangeTradeEntity(
+                            exchange = "OKX TR",
+                            execId = fill.billId.ifBlank { fill.ordId },
+                            orderId = fill.ordId,
+                            symbol = fill.instId,
+                            side = fill.side.replaceFirstChar { it.uppercase() },
+                            orderPrice = fill.fillPx.toDoubleOrNull() ?: 0.0,
+                            orderQty = fill.fillSz.toDoubleOrNull() ?: 0.0,
+                            orderType = "Limit",
+                            execPrice = fill.fillPx.toDoubleOrNull() ?: 0.0,
+                            execQty = fill.fillSz.toDoubleOrNull() ?: 0.0,
+                            execValue = (fill.fillPx.toDoubleOrNull() ?: 0.0) * (fill.fillSz.toDoubleOrNull() ?: 0.0),
+                            execFee = fill.fee.toDoubleOrNull() ?: 0.0,
+                            feeCurrency = fill.feeCcy,
+                            timeMillis = fill.ts.toLongOrNull() ?: System.currentTimeMillis(),
+                            isMaker = fill.execType.equals("M", ignoreCase = true)
+                        )
+                    }
+                    exchangeTradeDao.insertTrades(entitiesToInsert)
+                }
+                
+                val totalInDb = exchangeTradeDao.getTradeCountSync()
+                val syncResult = TradeSyncResult(
+                    totalFetched = remoteFills.size,
+                    existingInDb = existingInDbCount,
+                    newlyAddedCount = newFills.size,
+                    totalInDb = totalInDb,
+                    newlyAddedTrades = emptyList(), // Not strictly needed for simple display
+                    analysis = null
+                )
+                Result.success(syncResult)
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
         }
     }
 }
