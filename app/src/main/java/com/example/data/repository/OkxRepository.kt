@@ -448,13 +448,41 @@ class OkxRepository(
                 }
                 
                 val totalInDb = exchangeTradeDao.getTradeCountSync()
+                
+                val okxExecutions = remoteFills.map { fill ->
+                    com.example.data.remote.model.BybitExecutionDto(
+                        symbol = fill.instId,
+                        orderId = fill.ordId,
+                        side = fill.side.replaceFirstChar { it.uppercase() },
+                        orderPrice = fill.fillPx,
+                        orderQty = fill.fillSz,
+                        orderType = "Limit",
+                        execId = fill.billId.ifBlank { fill.ordId },
+                        execPrice = fill.fillPx,
+                        execQty = fill.fillSz,
+                        execType = "Trade",
+                        execValue = ((fill.fillPx.toDoubleOrNull() ?: 0.0) * (fill.fillSz.toDoubleOrNull() ?: 0.0)).toString(),
+                        execFee = fill.fee,
+                        feeCurrency = fill.feeCcy,
+                        execTime = fill.ts,
+                        isMaker = fill.execType.equals("M", ignoreCase = true)
+                    )
+                }
+
+                val okxAnalysis = com.example.bot.RebalanceEngine.calculateTradeAnalysis(
+                    symbol = targetSymbol,
+                    executions = okxExecutions,
+                    daysRange = daysBack,
+                    dateRangeLabel = "Son $daysBack Gün (OKX)"
+                )
+
                 val syncResult = TradeSyncResult(
                     totalFetched = remoteFills.size,
                     existingInDb = existingInDbCount,
                     newlyAddedCount = newFills.size,
                     totalInDb = totalInDb,
-                    newlyAddedTrades = emptyList(), // Not strictly needed for simple display
-                    analysis = null
+                    newlyAddedTrades = emptyList(),
+                    analysis = okxAnalysis
                 )
                 Result.success(syncResult)
             } catch (e: Exception) {

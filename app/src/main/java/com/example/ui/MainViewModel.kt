@@ -149,11 +149,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val liveAnalysis: StateFlow<TradeAnalysisResult?> = combine(
         orders,
-        repository.getAllExchangeTradesFlow()
-    ) { orderList, tradeList ->
+        repository.getAllExchangeTradesFlow(),
+        uiState
+    ) { orderList, tradeList, state ->
         RebalanceEngine.computeLiveTradeAnalysis(
-            orders = orderList,
-            exchangeTrades = tradeList
+            orders = orderList.filter { it.exchange == state.activeExchange || (state.activeExchange == "OKX" && it.exchange == "OKX TR") },
+            exchangeTrades = tradeList.filter { it.exchange == state.activeExchange || (state.activeExchange == "OKX" && it.exchange == "OKX TR") }
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
@@ -796,6 +797,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             
             // Also sync OKX if configured
             var okxAdded = 0
+            var okxSyncRes: TradeSyncResult? = null
             if (preferences.okxApiKey.isNotBlank()) {
                 _tradeAnalysis.update { it.copy(progressText = "OKX işlemleri çekiliyor...") }
                 val okxResult = app.okxRepository.syncTradesFromExchange(
@@ -803,7 +805,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     daysBack = daysBack,
                     startTimestamp = startTimestamp
                 )
-                okxAdded = okxResult.getOrNull()?.newlyAddedCount ?: 0
+                okxSyncRes = okxResult.getOrNull()
+                okxAdded = okxSyncRes?.newlyAddedCount ?: 0
             }
             
             result.onSuccess { syncRes ->
@@ -813,11 +816,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 } else {
                     "✓ İşlemler tarandı. Tüm işlemler zaten veritabanında kayıtlı (Yeni işlem yok)."
                 }
+                
+                val activeAnalysis = if (preferences.activeExchange == "OKX") okxSyncRes?.analysis else syncRes.analysis
+                val activeSyncResult = if (preferences.activeExchange == "OKX") okxSyncRes else syncRes
+                
                 _tradeAnalysis.update {
                     it.copy(
                         isLoading = false,
-                        analysis = syncRes.analysis,
-                        syncResult = syncRes,
+                        analysis = activeAnalysis,
+                        syncResult = activeSyncResult,
                         syncNotice = notice,
                         errorMessage = null,
                         lastFetchedAt = System.currentTimeMillis(),

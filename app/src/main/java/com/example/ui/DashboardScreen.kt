@@ -572,21 +572,15 @@ fun DashboardScreen(
                     }
                 }
                 1 -> {
-                    if (state.activeExchange == "OKX") {
-                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text("OKX için işlem geçmişi analizi desteklenmemektedir.", color = MinimalTextSecondary)
-                        }
-                    } else {
-                        TradeAnalysisScreen(
-                            state = tradeAnalysisState,
-                            isApiConfigured = state.isConfigured,
-                            currentPrice = state.currentPrice,
-                            activeBaseCoin = viewModel.preferences.bybitBaseCoin,
-                            activeSymbol = viewModel.preferences.bybitSymbol,
-                            onFetchAnalysis = { symbol, days, startTimestamp -> viewModel.fetchTradeAnalysis(symbol, days, startTimestamp) },
-                            onClearLocalDatabase = { viewModel.clearLocalExchangeDatabase() }
-                        )
-                    }
+                    TradeAnalysisScreen(
+                        state = tradeAnalysisState,
+                        isApiConfigured = if (state.activeExchange == "OKX") viewModel.preferences.okxApiKey.isNotBlank() else state.isConfigured,
+                        currentPrice = if (state.activeExchange == "OKX") state.okxCurrentPrice else state.currentPrice,
+                        activeBaseCoin = if (state.activeExchange == "OKX") viewModel.preferences.okxBaseCoin else viewModel.preferences.bybitBaseCoin,
+                        activeSymbol = if (state.activeExchange == "OKX") viewModel.preferences.okxSymbol else viewModel.preferences.bybitSymbol,
+                        onFetchAnalysis = { symbol, days, startTimestamp -> viewModel.fetchTradeAnalysis(symbol, days, startTimestamp) },
+                        onClearLocalDatabase = { viewModel.clearLocalExchangeDatabase() }
+                    )
                 }
                 2 -> {
                     OrderHistoryScreen(

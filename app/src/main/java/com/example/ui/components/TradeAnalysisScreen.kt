@@ -316,7 +316,7 @@ fun TradeAnalysisScreen(
                         )
                         Spacer(modifier = Modifier.height(14.dp))
                         Text(
-                            text = if (!state.progressText.isNullOrBlank()) state.progressText else "Bybit'ten işlem geçmişi çekiliyor...",
+                            text = if (!state.progressText.isNullOrBlank()) state.progressText else "İşlem geçmişi çekiliyor...",
                             fontWeight = FontWeight.Bold,
                             fontSize = 14.sp,
                             color = MinimalTextPrimary,
@@ -697,7 +697,7 @@ private fun TradeAnalysisHeaderCard(
                             softWrap = false
                         )
                         Text(
-                            text = "Bybit Spot • Derin Geçmiş Taraması",
+                            text = "Borsa • Derin Geçmiş Taraması",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Medium,
                             color = MinimalTextSecondary,
@@ -761,7 +761,7 @@ private fun TradeAnalysisHeaderCard(
 
             // Time Range Options Chips
             val rangeOptions = listOf(
-                730 to "2 Yıl (Bybit Maksimum)",
+                730 to "2 Yıl (Maksimum)",
                 365 to "1 Yıl",
                 180 to "6 Ay",
                 90 to "3 Ay",
@@ -1006,7 +1006,7 @@ private fun TradeAnalysisHeaderCard(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Bybit V5 borsa API'si en fazla 2 yıllık (730 gün) geçmişi saklar ve sorgulamaya izin verir. 2 yıldan daha eski veriler borsa tarafından API'den arşive kaldırıldığından yalnızca Bybit web sitesindeki Emir Geçmişi > Dışa Aktar (CSV) bölümünden indirilebilir. Uygulama, seçtiğiniz süreyi 7'şer günlük pencerelerle geriye doğru tarayarak tüm işlemlerinizi eksiksiz birleştirir.",
+                        text = "Borsa API'si kısıtlı geçmişi saklar ve sorgulamaya izin verir. Uygulama, seçtiğiniz süreyi geriye doğru tarayarak tüm işlemlerinizi eksiksiz birleştirir.",
                         fontSize = 11.sp,
                         color = MinimalTextPrimary,
                         lineHeight = 15.sp
@@ -2463,12 +2463,12 @@ private fun TradeAnalysisEmptyState(
             val descText = if (isApiConfigured) {
                 if (selectedStartDateMillis != null) {
                     val dateFormatted = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date(selectedStartDateMillis))
-                    "Bybit hesabınızdaki $dateFormatted tarihinden itibaren gerçekleşen tüm alım ve satım işlemlerini çekerek ortalama alış fiyatını, ortalama satış fiyatını ve net kâr/zarar durumunu görmek için butona tıklayın."
+                    "Borsa hesabınızdaki $dateFormatted tarihinden itibaren gerçekleşen tüm alım ve satım işlemlerini çekerek ortalama alış fiyatını, ortalama satış fiyatını ve net kâr/zarar durumunu görmek için butona tıklayın."
                 } else {
-                    "Bybit hesabınızdaki $selectedDaysBack günlük tüm alım ve satım geçmişini getirerek ortalama alış fiyatını, ortalama satış fiyatını ve net miktarları görmek için butona tıklayın."
+                    "Borsa hesabınızdaki $selectedDaysBack günlük tüm alım ve satım geçmişini getirerek ortalama alış fiyatını, ortalama satış fiyatını ve net miktarları görmek için butona tıklayın."
                 }
             } else {
-                "Geçmiş verilerini çekebilmek için lütfen önce Ayarlar menüsünden Bybit API anahtarlarınızı girin."
+                "Geçmiş verilerini çekebilmek için lütfen önce Ayarlar menüsünden API anahtarlarınızı girin."
             }
 
             Text(
