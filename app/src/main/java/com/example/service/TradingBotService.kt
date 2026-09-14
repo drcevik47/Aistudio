@@ -85,9 +85,9 @@ class TradingBotService : Service() {
             ACTION_START_BOT, null -> {
                 try {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        startForeground(NOTIFICATION_ID, buildForegroundNotification("Bybit Bot Başlatılıyor..."), android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+                        startForeground(NOTIFICATION_ID, buildForegroundNotification("BITBALANCE Başlatılıyor..."), android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
                     } else {
-                        startForeground(NOTIFICATION_ID, buildForegroundNotification("Bybit Bot Başlatılıyor..."))
+                        startForeground(NOTIFICATION_ID, buildForegroundNotification("BITBALANCE Başlatılıyor..."))
                     }
                 } catch (e: Exception) {
                     Log.e("TradingBotService", "startForeground failed", e)
@@ -374,7 +374,7 @@ class TradingBotService : Service() {
             
             val statusChannel = NotificationChannel(
                 CHANNEL_BOT_STATUS,
-                "Bybit Bot Durum Bildirimi",
+                "BITBALANCE Durum Bildirimi",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
                 description = "Botun 7/24 arka planda sürekli çalışmasını sağlayan bildirim"
@@ -382,7 +382,7 @@ class TradingBotService : Service() {
             
             val alertChannel = NotificationChannel(
                 CHANNEL_ALERTS,
-                "Bybit Bot Emir & Hata Bildirimleri",
+                "BITBALANCE Emir & Hata Bildirimleri",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
                 description = "Gerçekleşen emirler ve kritik hata uyarıları"

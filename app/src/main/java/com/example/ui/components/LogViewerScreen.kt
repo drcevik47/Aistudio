@@ -580,7 +580,7 @@ private fun ShareLogsBottomSheetContent(
             trailingIcon = Icons.Default.FileUpload,
             isPrimaryHighlight = true,
             onClick = {
-                onOptionShareFile(logs, "bybit_bot_tum_loglar", "Bybit Bot - Tüm Sistem Telemetri Logları")
+                onOptionShareFile(logs, "bitbalance_tum_loglar", "BITBALANCE - Tüm Sistem Telemetri Logları")
             }
         )
 
@@ -596,7 +596,7 @@ private fun ShareLogsBottomSheetContent(
             trailingIcon = Icons.Default.FileUpload,
             isPrimaryHighlight = true,
             onClick = {
-                onOptionShareFile(errorLogs, "bybit_bot_hata_raporu", "Bybit Bot - Hata ve Teşhis Raporu")
+                onOptionShareFile(errorLogs, "bitbalance_hata_raporu", "BITBALANCE - Hata ve Teşhis Raporu")
             }
         )
 
@@ -693,7 +693,7 @@ private fun ShareLogsBottomSheetContent(
             onClick = {
                 val text = formatLogsForSharing(
                     logs = logs.take(100),
-                    title = "Bybit Bot Logları",
+                    title = "BITBALANCE Logları",
                     dateFormat = dateFormat
                 )
                 onOptionShare(text, "Bybit Rebalancer Bot Logları")

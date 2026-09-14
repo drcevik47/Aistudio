@@ -22,7 +22,7 @@ object KlineExporter {
         try {
             val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
             val extension = format.lowercase()
-            val fileName = "BybitKline_${symbol}_${interval}_$timestamp.$extension"
+            val fileName = "BitBalanceKline_${symbol}_${interval}_$timestamp.$extension"
             
             val logsDir = File(context.cacheDir, "klines").apply { if (!exists()) mkdirs() }
             val file = File(logsDir, fileName)

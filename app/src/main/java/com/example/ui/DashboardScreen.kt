@@ -163,7 +163,7 @@ fun DashboardScreen(
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {
                             Text(
-                                text = "Bybit Rebalancer",
+                                text = "BITBALANCE",
                                 fontSize = 18.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MinimalTextPrimary,

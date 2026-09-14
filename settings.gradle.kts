@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "Bybit Bot"
+rootProject.name = "BITBALANCE"
 
 include(":app")

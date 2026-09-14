@@ -21,7 +21,7 @@ object OrderHistoryExporter {
     ) {
         try {
             val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-            val fileName = "BybitBot_IslemGecmisi_$timestamp.txt"
+            val fileName = "BitBalance_IslemGecmisi_$timestamp.txt"
             
             val logsDir = File(context.cacheDir, "logs").apply { if (!exists()) mkdirs() }
             val file = File(logsDir, fileName)
