@@ -91,12 +91,12 @@ class OkxRepository(
                     val tradeRes = api.getBalance(null)
                     if (tradeRes.code == "0" && tradeRes.data.isNotEmpty()) {
                         tradeRes.data.first().details.forEach { detail ->
-                            val avail = detail.availEq.toDoubleOrNull() ?: detail.availBal.toDoubleOrNull() ?: 0.0
+                            val qty = detail.eq.toDoubleOrNull() ?: detail.availEq.toDoubleOrNull() ?: detail.availBal.toDoubleOrNull() ?: 0.0
                             val usdEq = detail.eqUsd?.toDoubleOrNull() ?: 0.0
                             val current = map[detail.ccy]
-                            val newAvail = (current?.quantity ?: 0.0) + avail
+                            val newQty = (current?.quantity ?: 0.0) + qty
                             val newUsdEq = (current?.fiatValue ?: 0.0) + usdEq
-                            map[detail.ccy] = AssetBalance(newAvail, newUsdEq)
+                            map[detail.ccy] = AssetBalance(newQty, newUsdEq)
                         }
                         fetchSuccess = true
                         // Removed spammy log
@@ -113,11 +113,11 @@ class OkxRepository(
                         val fundRes = api.getAssetBalances(null)
                         if (fundRes.code == "0" && fundRes.data.isNotEmpty()) {
                             fundRes.data.forEach { asset ->
-                                val avail = asset.availBal.toDoubleOrNull() ?: 0.0
+                                val qty = asset.bal.toDoubleOrNull() ?: asset.availBal.toDoubleOrNull() ?: 0.0
                                 val current = map[asset.ccy]
-                                val newAvail = (current?.quantity ?: 0.0) + avail
+                                val newQty = (current?.quantity ?: 0.0) + qty
                                 // Asset balances don't typically have eqUsd, so we just carry over or use 0
-                                map[asset.ccy] = AssetBalance(newAvail, current?.fiatValue ?: 0.0)
+                                map[asset.ccy] = AssetBalance(newQty, current?.fiatValue ?: 0.0)
                             }
                             fetchSuccess = true
                             // Removed spammy log
