@@ -40,6 +40,7 @@ class BybitWebSocketClient(
     private var apiSecret: String = ""
     private var isTestnet: Boolean = false
     private var isRunning: Boolean = false
+    private var activeSymbol: String = "MNTUSDT"
     @Volatile
     private var isIntentionalDisconnect: Boolean = false
     var serverTimeOffsetMs: Long = 0L
@@ -66,11 +67,12 @@ class BybitWebSocketClient(
         return prev == null
     }
 
-    fun connect(key: String, secret: String, testnet: Boolean, timeOffsetMs: Long = 0L) {
+    fun connect(key: String, secret: String, testnet: Boolean, timeOffsetMs: Long = 0L, symbol: String = "MNTUSDT") {
         this.apiKey = key
         this.apiSecret = secret
         this.isTestnet = testnet
         this.serverTimeOffsetMs = timeOffsetMs
+        this.activeSymbol = symbol
         this.isRunning = true
 
         disconnect()
@@ -100,7 +102,7 @@ class BybitWebSocketClient(
                 reconnectAttempts = 0
                 val subMsg = JSONObject().apply {
                     put("op", "subscribe")
-                    put("args", JSONArray().put("tickers.MNTUSDT"))
+                    put("args", JSONArray().put("tickers.$activeSymbol"))
                 }
                 webSocket.send(subMsg.toString())
                 _connectionStatus.tryEmit(Pair(true, "Canlı piyasa veri akışı aktif"))
@@ -116,7 +118,7 @@ class BybitWebSocketClient(
                     }
 
                     val topic = json.optString("topic", "")
-                    if (topic == "tickers.MNTUSDT") {
+                    if (topic == "tickers.$activeSymbol") {
                         val dataObj = json.optJSONObject("data")
                         if (dataObj != null) {
                             val lastPrice = dataObj.optDouble("lastPrice", 0.0)

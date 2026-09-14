@@ -133,7 +133,8 @@ class TradingBotService : Service() {
                 key = preferences.apiKey,
                 secret = preferences.apiSecret,
                 testnet = preferences.isTestnet,
-                timeOffsetMs = offset
+                timeOffsetMs = offset,
+                symbol = preferences.bybitSymbol
             )
 
             okxWsClient.start()
