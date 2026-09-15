@@ -84,8 +84,10 @@ class TradingBotService : Service() {
             }
             ACTION_START_BOT, null -> {
                 try {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        startForeground(NOTIFICATION_ID, buildForegroundNotification("BITBALANCE Başlatılıyor..."), android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+                    if (Build.VERSION.SDK_INT >= 34) {
+                        startForeground(NOTIFICATION_ID, buildForegroundNotification("BITBALANCE Başlatılıyor..."), android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+                    } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        startForeground(NOTIFICATION_ID, buildForegroundNotification("BITBALANCE Başlatılıyor..."), 0)
                     } else {
                         startForeground(NOTIFICATION_ID, buildForegroundNotification("BITBALANCE Başlatılıyor..."))
                     }
