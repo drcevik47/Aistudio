@@ -232,6 +232,44 @@ class OkxRepository(
             if (tickerRes.isFailure) return@withContext Result.failure(Exception("OKX Ticker alınamadı"))
             val currentPrice = tickerRes.getOrNull()?.last?.toDoubleOrNull() ?: 0.0
 
+            if ((openBuyOrder != null && openSellOrder == null) || (openBuyOrder == null && openSellOrder != null)) {
+                val missingSide = if (openBuyOrder == null) "Buy" else "Sell"
+                val remainingOrder = openBuyOrder ?: openSellOrder!!
+                val missingOrderId = if (missingSide.equals("Sell", ignoreCase = true)) activeSellId else activeBuyId
+
+                val lastBase = preferences.okxLastRebalancePrice
+                val step = preferences.okxStepPercent
+
+                val expectedGridPrice = if (missingSide.equals("Sell", ignoreCase = true)) {
+                    if (lastBase > 0.0) lastBase * (1.0 + step / 100.0) else 0.0
+                } else {
+                    if (lastBase > 0.0) lastBase * (1.0 - step / 100.0) else 0.0
+                }
+
+                val finalExecPrice = if (expectedGridPrice > 0.0) expectedGridPrice else currentPrice
+                val execOrderId = missingOrderId.ifBlank { "okx_exec_${System.currentTimeMillis()}" }
+
+                log(LogLevel.SUCCESS, callerTag, "OKX Mutabakat: $missingSide emri GERÇEKLEŞMİŞ! Fiyat: $finalExecPrice ($execOrderId)")
+
+                recordOrderFilled(
+                    orderId = execOrderId,
+                    side = missingSide,
+                    price = finalExecPrice,
+                    qty = 0.0,
+                    triggerReason = "reconciliation"
+                )
+
+                log(LogLevel.INFO, callerTag, "OKX Karşı açık emir (${remainingOrder.side} ${remainingOrder.ordId}) iptal ediliyor...")
+                cancelOrder(remainingOrder.ordId)
+
+                preferences.okxLastRebalancePrice = finalExecPrice
+                preferences.okxActiveBuyOrderId = ""
+                preferences.okxActiveSellOrderId = ""
+            } else if (openBuyOrder == null && openSellOrder == null) {
+                preferences.okxActiveBuyOrderId = ""
+                preferences.okxActiveSellOrderId = ""
+            }
+
             val balanceRes = getWalletBalance()
             if (balanceRes.isFailure) return@withContext Result.failure(Exception("OKX Bakiye alınamadı"))
             val balances = balanceRes.getOrNull() ?: emptyMap()
@@ -249,13 +287,6 @@ class OkxRepository(
 
             if (!gridPlan.isValid) {
                 return@withContext Result.failure(Exception("OKX Grid planı geçersiz: ${gridPlan.validationMessage}"))
-            }
-
-            // Cancel any stray orders
-            if (openBuyOrder == null && openSellOrder != null) {
-                cancelOrder(openSellOrder.ordId)
-            } else if (openSellOrder == null && openBuyOrder != null) {
-                cancelOrder(openBuyOrder.ordId)
             }
 
             // Place Sell Order

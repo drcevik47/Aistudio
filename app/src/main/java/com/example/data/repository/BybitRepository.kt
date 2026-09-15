@@ -722,9 +722,11 @@ class BybitRepository(
                     }
                 }
 
-                val filledExec = if (missingOrderId.isNotBlank()) {
+                val filledExec = (if (missingOrderId.isNotBlank()) {
                     recentExecutions.firstOrNull { it.orderId == missingOrderId }
-                } else null ?: recentExecutions.firstOrNull { exec ->
+                } else {
+                    null
+                }) ?: recentExecutions.firstOrNull { exec ->
                     exec.side.equals(missingSide, ignoreCase = true) &&
                     exec.orderId != remainingOrder.orderId &&
                     (exec.execTime.toLongOrNull() ?: 0L) >= twoHoursAgo
