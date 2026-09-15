@@ -501,7 +501,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
 
-        var okxOrders = emptyList<com.example.data.remote.okx.model.OkxOrderDetails>()
+        var okxOrders = _uiState.value.okxActiveOrders
         if (cycleCount % 2 == 0) {
             val pendingRes = okxRepository.getPendingOrders()
             pendingRes.onSuccess { list ->

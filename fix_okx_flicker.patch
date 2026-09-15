@@ -1,0 +1,11 @@
+--- app/src/main/java/com/example/ui/MainViewModel.kt
++++ app/src/main/java/com/example/ui/MainViewModel.kt
+@@ -501,7 +501,7 @@
+             )
+         }
+ 
+-        var okxOrders = emptyList<com.example.data.remote.okx.model.OkxOrderDetails>()
++        var okxOrders = _uiState.value.okxActiveOrders
+         if (cycleCount % 2 == 0) {
+             val pendingRes = okxRepository.getPendingOrders()
+             pendingRes.onSuccess { list ->
