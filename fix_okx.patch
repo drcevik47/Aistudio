@@ -1,75 +1,61 @@
---- app/src/main/java/com/example/data/repository/OkxRepository.kt
-+++ app/src/main/java/com/example/data/repository/OkxRepository.kt
-@@ -228,6 +228,45 @@
-                 return@withContext Result.success(com.example.data.repository.ReconciliationResult(message = "OKX Grid emirleri sorunsuz çalışıyor"))
-             }
+--- app/src/main/java/com/example/ui/MainViewModel.kt
++++ app/src/main/java/com/example/ui/MainViewModel.kt
+@@ -484,27 +484,22 @@
+     }
  
-             val tickerRes = getTicker()
-             if (tickerRes.isFailure) return@withContext Result.failure(Exception("OKX Ticker alınamadı"))
-             val currentPrice = tickerRes.getOrNull()?.last?.toDoubleOrNull() ?: 0.0
+-    private suspend fun fetchOkxData(cycleCount: Int = 0) {
+-        if (preferences.okxApiKey.isBlank()) return
++    private suspend fun fetchOkxData(cycleCount: Int = 0) = kotlinx.coroutines.coroutineScope {
++        if (preferences.okxApiKey.isBlank()) return@coroutineScope
+            
+         var okxCurrentPrice = _uiState.value.okxCurrentPrice
+         var okxUsdt = _uiState.value.okxUsdtBalance
+         var okxBaseQty = _uiState.value.okxBaseCoinBalance
+         var okxAllBalances = _uiState.value.okxWalletBalances
+         var okxAnalysis = _uiState.value.okxPortfolioAnalysis
  
-+            if ((openBuyOrder != null && openSellOrder == null) || (openBuyOrder == null && openSellOrder != null)) {
-+                val missingSide = if (openBuyOrder == null) "Buy" else "Sell"
-+                val remainingOrder = openBuyOrder ?: openSellOrder!!
-+                val missingOrderId = if (missingSide.equals("Sell", ignoreCase = true)) activeSellId else activeBuyId
-+
-+                val lastBase = preferences.okxLastRebalancePrice
-+                val step = preferences.okxStepPercent
-+
-+                val expectedGridPrice = if (missingSide.equals("Sell", ignoreCase = true)) {
-+                    if (lastBase > 0.0) lastBase * (1.0 + step / 100.0) else 0.0
-+                } else {
-+                    if (lastBase > 0.0) lastBase * (1.0 - step / 100.0) else 0.0
-+                }
-+
-+                val finalExecPrice = if (expectedGridPrice > 0.0) expectedGridPrice else currentPrice
-+                val execOrderId = missingOrderId.ifBlank { "okx_exec_${System.currentTimeMillis()}" }
-+
-+                log(LogLevel.SUCCESS, callerTag, "OKX Mutabakat: $missingSide emri GERÇEKLEŞMİŞ! Fiyat: $finalExecPrice ($execOrderId)")
-+
-+                recordOrderFilled(
-+                    orderId = execOrderId,
-+                    side = missingSide,
-+                    price = finalExecPrice,
-+                    qty = 0.0,
-+                    triggerReason = "reconciliation"
-+                )
-+
-+                log(LogLevel.INFO, callerTag, "OKX Karşı açık emir (${remainingOrder.side} ${remainingOrder.ordId}) iptal ediliyor...")
-+                cancelOrder(remainingOrder.ordId)
-+
-+                preferences.okxLastRebalancePrice = finalExecPrice
-+                preferences.okxActiveBuyOrderId = ""
-+                preferences.okxActiveSellOrderId = ""
-+            } else if (openBuyOrder == null && openSellOrder == null) {
-+                preferences.okxActiveBuyOrderId = ""
-+                preferences.okxActiveSellOrderId = ""
-+            }
-+
-             val balanceRes = getWalletBalance()
-             if (balanceRes.isFailure) return@withContext Result.failure(Exception("OKX Bakiye alınamadı"))
-             val balances = balanceRes.getOrNull() ?: emptyMap()
-             val usdtBalance = balances["USDT"]?.quantity ?: 0.0
-             val baseCoinBalance = balances[preferences.okxBaseCoin]?.quantity ?: 0.0
- 
-             val basePrice = if (preferences.okxLastRebalancePrice > 0.0) preferences.okxLastRebalancePrice else currentPrice
- 
-             val gridPlan = com.example.bot.RebalanceEngine.calculateGridOrders(
-                 usdtBalance = usdtBalance,
-                 baseCoinBalance = baseCoinBalance,
-                 basePrice = basePrice,
-                 stepPercent = preferences.okxStepPercent
-             )
- 
-             if (!gridPlan.isValid) {
-                 return@withContext Result.failure(Exception("OKX Grid planı geçersiz: ${gridPlan.validationMessage}"))
-             }
--
--            // Cancel any stray orders
--            if (openBuyOrder == null && openSellOrder != null) {
--                cancelOrder(openSellOrder.ordId)
--            } else if (openSellOrder == null && openBuyOrder != null) {
--                cancelOrder(openBuyOrder.ordId)
+-        if (cycleCount % 2 == 0 || okxCurrentPrice <= 0.0) {
+-            val okxTickerRes = okxRepository.getTicker()
+-            okxTickerRes.onSuccess { ticker ->
+-                okxCurrentPrice = ticker.last.toDoubleOrNull() ?: 0.0
 -            }
+-        }
+-
+-        if (cycleCount % 2 == 0 || okxUsdt <= 0.0) {
+-            val okxBalanceRes = okxRepository.getWalletBalance()
+-            okxBalanceRes.onSuccess { map ->
+-                okxAllBalances = map
+-                okxUsdt = map["USDT"]?.quantity ?: 0.0
+-                okxBaseQty = map[preferences.okxBaseCoin]?.quantity ?: 0.0
+-            }
++        val tickerDeferred = kotlinx.coroutines.async {
++            if (cycleCount % 2 == 0 || okxCurrentPrice <= 0.0) okxRepository.getTicker() else null
++        }
++        val balanceDeferred = kotlinx.coroutines.async {
++            if (cycleCount % 2 == 0 || okxUsdt <= 0.0) okxRepository.getWalletBalance() else null
++        }
++        val ordersDeferred = kotlinx.coroutines.async {
++            if (cycleCount % 2 == 0) okxRepository.getPendingOrders() else null
++        }
++
++        tickerDeferred.await()?.onSuccess { ticker ->
++            okxCurrentPrice = ticker.last.toDoubleOrNull() ?: 0.0
++        }
++
++        balanceDeferred.await()?.onSuccess { map ->
++            okxAllBalances = map
++            okxUsdt = map["USDT"]?.quantity ?: 0.0
++            okxBaseQty = map[preferences.okxBaseCoin]?.quantity ?: 0.0
+         }
  
-             // Place Sell Order
+@@ -517,8 +512,6 @@
+ 
+         var okxOrders = _uiState.value.okxActiveOrders
+-        if (cycleCount % 2 == 0) {
+-            val pendingRes = okxRepository.getPendingOrders()
+-            pendingRes.onSuccess { list ->
+-                okxOrders = list
+-            }
++        ordersDeferred.await()?.onSuccess { list ->
++            okxOrders = list
+         }

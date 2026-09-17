@@ -18,6 +18,7 @@ import com.example.data.remote.model.TradeSyncResult
 import com.example.data.repository.LastFilledTradeInfo
 import com.example.service.TradingBotService
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -197,20 +198,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private suspend fun silentRefresh(cycleCount: Int = 0) {
+    private suspend fun silentRefresh(cycleCount: Int = 0) = kotlinx.coroutines.coroutineScope {
         try {
-            if (cycleCount % 4 == 0) {
-                repository.syncUnfilledOrdersWithExchange()
+            val syncDeferred = async {
+                if (cycleCount % 4 == 0) repository.syncUnfilledOrdersWithExchange()
             }
-            if (cycleCount % 30 == 0) {
-                repository.pruneLogs()
+            val pruneDeferred = async {
+                if (cycleCount % 30 == 0) repository.pruneLogs()
             }
+
+            val tickerDeferred = async { repository.getTicker() }
+            val balanceDeferred = async {
+                if (cycleCount % 2 == 0 || _uiState.value.usdtBalance <= 0.0) repository.getWalletBalance() else null
+            }
+            val ordersDeferred = async {
+                if (cycleCount % 2 == 1 || _uiState.value.activeOrders.isEmpty()) repository.getOpenOrders() else null
+            }
+            val okxDeferred = async { fetchOkxData(cycleCount) }
+
+            // Ensure background maintenance tasks are awaited but don't block state computation
+            syncDeferred.await()
+            pruneDeferred.await()
 
             var currentPrice = _uiState.value.currentPrice
             var priceChange = _uiState.value.price24hChange
-            
-            val tickerRes = repository.getTicker()
-            tickerRes.onSuccess { ticker ->
+            tickerDeferred.await().onSuccess { ticker ->
                 currentPrice = ticker.currentPrice
                 priceChange = ticker.changePercent24h
             }
@@ -218,9 +230,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             var usdt = _uiState.value.usdtBalance
             var baseQty = _uiState.value.baseCoinBalance
             var allBalances = _uiState.value.walletBalances
-
-            if (cycleCount % 2 == 0 || usdt <= 0.0) {
-                val balanceRes = repository.getWalletBalance()
+            val balanceRes = balanceDeferred.await()
+            if (balanceRes != null) {
                 balanceRes.onSuccess { map ->
                     allBalances = map
                     usdt = map["USDT"]?.quantity ?: 0.0
@@ -229,8 +240,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             var openOrders = _uiState.value.activeOrders
-            if (cycleCount % 2 == 1 || openOrders.isEmpty()) {
-                val openOrdersRes = repository.getOpenOrders()
+            val openOrdersRes = ordersDeferred.await()
+            if (openOrdersRes != null) {
                 openOrdersRes.onSuccess { list ->
                     openOrders = list
                 }
@@ -255,11 +266,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 stepPercent = _uiState.value.stepPercent
             )
 
+            okxDeferred.await()
 
-
-            fetchOkxData(cycleCount)
             _uiState.update {
-
                 it.copy(
                     currentPrice = currentPrice,
                     price24hChange = priceChange,
@@ -389,18 +398,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         repository.log(LogLevel.ERROR, "System", "Bot servisi başlatılamadı: ${e.message}")
                     }
                 }
-                val reconRes = repository.reconcileGridOrders(callerTag = "ManuelYenile")
-                reconRes.onSuccess { rec ->
-                    if (rec.executedOrderFound) {
-                        _uiState.update { it.copy(statusMessage = rec.message) }
-                    }
+            }
+
+            // Launch all API requests concurrently to minimize loading times
+            val reconDeferred = async {
+                if (preferences.isBotActive) repository.reconcileGridOrders(callerTag = "ManuelYenile") else null
+            }
+            val tickerDeferred = async { repository.getTicker() }
+            val balanceDeferred = async { repository.getWalletBalance() }
+            val ordersDeferred = async { repository.getOpenOrders() }
+            val okxDeferred = async { fetchOkxData(0) }
+
+            // Await Recon
+            reconDeferred.await()?.onSuccess { rec ->
+                if (rec.executedOrderFound) {
+                    _uiState.update { it.copy(statusMessage = rec.message) }
                 }
             }
 
             var currentPrice = _uiState.value.currentPrice
             var priceChange = _uiState.value.price24hChange
-            val tickerRes = repository.getTicker()
-            tickerRes.onSuccess { ticker ->
+            tickerDeferred.await().onSuccess { ticker ->
                 currentPrice = ticker.currentPrice
                 priceChange = ticker.changePercent24h
             }.onFailure { err ->
@@ -409,8 +427,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             var usdt = _uiState.value.usdtBalance
             var baseQty = _uiState.value.baseCoinBalance
-            val balanceRes = repository.getWalletBalance()
-            balanceRes.onSuccess { map ->
+            balanceDeferred.await().onSuccess { map ->
                 usdt = map["USDT"]?.quantity ?: 0.0
                 baseQty = map[preferences.bybitBaseCoin]?.quantity ?: 0.0
             }.onFailure { err ->
@@ -419,8 +436,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             var openOrders = emptyList<BybitOrderDto>()
-            val openOrdersRes = repository.getOpenOrders()
-            openOrdersRes.onSuccess { list ->
+            ordersDeferred.await().onSuccess { list ->
                 openOrders = list
             }
 
@@ -448,7 +464,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     !preferences.isBotActive &&
                     analysis.deltaUsdt >= 1.0
 
-            fetchOkxData(0)
+            okxDeferred.await()
+
             _uiState.update {
                 it.copy(
                     isLoading = false,
@@ -468,8 +485,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
 
-    private suspend fun fetchOkxData(cycleCount: Int = 0) {
-        if (preferences.okxApiKey.isBlank()) return
+    private suspend fun fetchOkxData(cycleCount: Int = 0) = kotlinx.coroutines.coroutineScope {
+        if (preferences.okxApiKey.isBlank()) return@coroutineScope
         
         var okxCurrentPrice = _uiState.value.okxCurrentPrice
         var okxUsdt = _uiState.value.okxUsdtBalance
@@ -477,20 +494,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         var okxAllBalances = _uiState.value.okxWalletBalances
         var okxAnalysis = _uiState.value.okxPortfolioAnalysis
 
-        if (cycleCount % 2 == 0 || okxCurrentPrice <= 0.0) {
-            val okxTickerRes = okxRepository.getTicker()
-            okxTickerRes.onSuccess { ticker ->
-                okxCurrentPrice = ticker.last.toDoubleOrNull() ?: 0.0
-            }
+        val tickerDeferred = async {
+            if (cycleCount % 2 == 0 || okxCurrentPrice <= 0.0) okxRepository.getTicker() else null
+        }
+        val balanceDeferred = async {
+            if (cycleCount % 2 == 0 || okxUsdt <= 0.0) okxRepository.getWalletBalance() else null
+        }
+        val ordersDeferred = async {
+            if (cycleCount % 2 == 0) okxRepository.getPendingOrders() else null
         }
 
-        if (cycleCount % 2 == 0 || okxUsdt <= 0.0) {
-            val okxBalanceRes = okxRepository.getWalletBalance()
-            okxBalanceRes.onSuccess { map ->
-                okxAllBalances = map
-                okxUsdt = map["USDT"]?.quantity ?: 0.0
-                okxBaseQty = map[preferences.okxBaseCoin]?.quantity ?: 0.0
-            }
+        tickerDeferred.await()?.onSuccess { ticker ->
+            okxCurrentPrice = ticker.last.toDoubleOrNull() ?: 0.0
+        }
+
+        balanceDeferred.await()?.onSuccess { map ->
+            okxAllBalances = map
+            okxUsdt = map["USDT"]?.quantity ?: 0.0
+            okxBaseQty = map[preferences.okxBaseCoin]?.quantity ?: 0.0
         }
 
         if (okxCurrentPrice > 0.0) {
@@ -502,11 +523,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         var okxOrders = _uiState.value.okxActiveOrders
-        if (cycleCount % 2 == 0) {
-            val pendingRes = okxRepository.getPendingOrders()
-            pendingRes.onSuccess { list ->
-                okxOrders = list
-            }
+        ordersDeferred.await()?.onSuccess { list ->
+            okxOrders = list
         }
 
         val anchorOkxBasePrice = if (preferences.isOkxBotActive && preferences.okxLastRebalancePrice > 0.0) {

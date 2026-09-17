@@ -211,6 +211,10 @@ class TradingBotService : Service() {
                                 updateNotification()
                             }
                         }
+
+                        if (cycleCount % 3 == 0) {
+                            repository.reconcileGridOrders(callerTag = "Watchdog-Bybit")
+                        }
                     }
 
                     // --- OKX RECONCILIATION ---
