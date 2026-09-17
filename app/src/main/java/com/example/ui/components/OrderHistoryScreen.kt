@@ -1,5 +1,15 @@
 package com.example.ui.components
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.derivedStateOf
+import kotlinx.coroutines.launch
 import android.app.DatePickerDialog
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -167,10 +177,15 @@ fun OrderHistoryScreen(
         }
     }
 
-    LazyColumn(
-        modifier = modifier
-            .fillMaxSize()
-            .testTag("order_history_screen"),
+    val listState = rememberLazyListState()
+    val coroutineScope = rememberCoroutineScope()
+    
+    Box(modifier = modifier.fillMaxSize()) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier
+                .fillMaxSize()
+                .testTag("order_history_screen"),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
@@ -609,6 +624,44 @@ fun OrderHistoryScreen(
         } else {
             items(filteredOrders, key = { it.id }) { order ->
                 OrderItemCard(order = order, dateFormat = dateFormat, activeBaseCoin = activeBaseCoin)
+            }
+        }
+    }
+
+        val showFab by remember {
+            derivedStateOf {
+                val layoutInfo = listState.layoutInfo
+                val totalItems = layoutInfo.totalItemsCount
+                if (totalItems == 0) false
+                else {
+                    val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()
+                    lastVisible?.index != totalItems - 1
+                }
+            }
+        }
+        
+        AnimatedVisibility(
+            visible = showFab,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 24.dp),
+            enter = fadeIn() + slideInVertically(initialOffsetY = { it / 2 }),
+            exit = fadeOut() + slideOutVertically(targetOffsetY = { it / 2 })
+        ) {
+            FloatingActionButton(
+                onClick = {
+                    coroutineScope.launch {
+                        val lastIndex = listState.layoutInfo.totalItemsCount - 1
+                        if (lastIndex >= 0) {
+                            listState.animateScrollToItem(lastIndex)
+                        }
+                    }
+                },
+                containerColor = MinimalPrimary,
+                contentColor = Color.White,
+                shape = CircleShape
+            ) {
+                Icon(Icons.Default.ArrowDownward, contentDescription = "En Aşağı Kaydır")
             }
         }
     }
