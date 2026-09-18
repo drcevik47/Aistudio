@@ -2,29 +2,87 @@ package com.example.data.local
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.util.Log
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 
 class BotPreferences(context: Context) {
-    private val prefs: SharedPreferences = context.getSharedPreferences("bybit_bot_prefs", Context.MODE_PRIVATE)
+    private val standardPrefs: SharedPreferences = context.getSharedPreferences("bybit_bot_prefs", Context.MODE_PRIVATE)
+
+    private val securePrefs: SharedPreferences = try {
+        val masterKey = MasterKey.Builder(context)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
+        EncryptedSharedPreferences.create(
+            context,
+            "bybit_secure_prefs",
+            masterKey,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+        )
+    } catch (e: Exception) {
+        Log.e("BotPreferences", "EncryptedSharedPreferences creation failed, fallback to standard: ${e.message}")
+        standardPrefs
+    }
+
+    init {
+        // Automatically migrate legacy plaintext credentials from standardPrefs to securePrefs
+        try {
+            if (securePrefs !== standardPrefs) {
+                val legacyKeys = listOf(
+                    KEY_API_KEY,
+                    KEY_API_SECRET,
+                    KEY_OKX_API_KEY,
+                    KEY_OKX_API_SECRET,
+                    KEY_OKX_API_PASSPHRASE
+                )
+                var needsMigration = false
+                val secureEditor = securePrefs.edit()
+                val standardEditor = standardPrefs.edit()
+
+                for (key in legacyKeys) {
+                    val oldVal = standardPrefs.getString(key, null)
+                    if (!oldVal.isNullOrBlank()) {
+                        if (securePrefs.getString(key, null).isNullOrBlank()) {
+                            secureEditor.putString(key, oldVal)
+                            needsMigration = true
+                        }
+                        // Remove plaintext value from standardPrefs
+                        standardEditor.remove(key)
+                    }
+                }
+                if (needsMigration) {
+                    secureEditor.apply()
+                }
+                standardEditor.apply()
+            }
+        } catch (e: Exception) {
+            Log.e("BotPreferences", "Credential migration error: ${e.message}")
+        }
+    }
+
+    private val prefs: SharedPreferences
+        get() = standardPrefs
 
     var apiKey: String
-        get() = prefs.getString(KEY_API_KEY, "") ?: ""
-        set(value) = prefs.edit().putString(KEY_API_KEY, value.trim()).apply()
+        get() = securePrefs.getString(KEY_API_KEY, "") ?: ""
+        set(value) = securePrefs.edit().putString(KEY_API_KEY, value.trim()).apply()
 
     var apiSecret: String
-        get() = prefs.getString(KEY_API_SECRET, "") ?: ""
-        set(value) = prefs.edit().putString(KEY_API_SECRET, value.trim()).apply()
+        get() = securePrefs.getString(KEY_API_SECRET, "") ?: ""
+        set(value) = securePrefs.edit().putString(KEY_API_SECRET, value.trim()).apply()
 
     var okxApiKey: String
-        get() = prefs.getString(KEY_OKX_API_KEY, "") ?: ""
-        set(value) = prefs.edit().putString(KEY_OKX_API_KEY, value.trim()).apply()
+        get() = securePrefs.getString(KEY_OKX_API_KEY, "") ?: ""
+        set(value) = securePrefs.edit().putString(KEY_OKX_API_KEY, value.trim()).apply()
 
     var okxApiSecret: String
-        get() = prefs.getString(KEY_OKX_API_SECRET, "") ?: ""
-        set(value) = prefs.edit().putString(KEY_OKX_API_SECRET, value.trim()).apply()
+        get() = securePrefs.getString(KEY_OKX_API_SECRET, "") ?: ""
+        set(value) = securePrefs.edit().putString(KEY_OKX_API_SECRET, value.trim()).apply()
 
     var okxApiPassphrase: String
-        get() = prefs.getString(KEY_OKX_API_PASSPHRASE, "") ?: ""
-        set(value) = prefs.edit().putString(KEY_OKX_API_PASSPHRASE, value.trim()).apply()
+        get() = securePrefs.getString(KEY_OKX_API_PASSPHRASE, "") ?: ""
+        set(value) = securePrefs.edit().putString(KEY_OKX_API_PASSPHRASE, value.trim()).apply()
 
     var bybitSymbol: String
         get() = prefs.getString(KEY_BYBIT_SYMBOL, "MNTUSDT") ?: "MNTUSDT"
@@ -111,15 +169,23 @@ class BotPreferences(context: Context) {
         }
 
     fun saveCredentials(key: String, secret: String, testnet: Boolean) {
-        prefs.edit()
+        securePrefs.edit()
             .putString(KEY_API_KEY, key.trim())
             .putString(KEY_API_SECRET, secret.trim())
+            .apply()
+        prefs.edit()
+            .remove(KEY_API_KEY)
+            .remove(KEY_API_SECRET)
             .putBoolean(KEY_IS_TESTNET, testnet)
             .putBoolean(KEY_IS_CONFIGURED, key.isNotBlank() && secret.isNotBlank())
             .apply()
     }
 
     fun clearCredentials() {
+        securePrefs.edit()
+            .remove(KEY_API_KEY)
+            .remove(KEY_API_SECRET)
+            .apply()
         prefs.edit()
             .remove(KEY_API_KEY)
             .remove(KEY_API_SECRET)

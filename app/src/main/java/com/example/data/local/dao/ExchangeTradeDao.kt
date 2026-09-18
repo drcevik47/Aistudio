@@ -31,6 +31,9 @@ interface ExchangeTradeDao {
     @Query("SELECT execId FROM exchange_trades")
     suspend fun getAllExecIds(): List<String>
 
+    @Query("SELECT orderId FROM exchange_trades WHERE orderId IS NOT NULL AND orderId != ''")
+    suspend fun getAllOrderIds(): List<String>
+
     @Query("SELECT COUNT(*) FROM exchange_trades")
     fun getTradeCount(): Flow<Int>
 

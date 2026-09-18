@@ -46,6 +46,12 @@ class BybitWebSocketClient(
     private var isIntentionalDisconnect: Boolean = false
     var serverTimeOffsetMs: Long = 0L
 
+    val isConnected: Boolean
+        get() = isRunning && (publicWs != null || privateWs != null)
+
+    val isPrivateConnected: Boolean
+        get() = isRunning && privateWs != null
+
     private val _orderUpdates = MutableSharedFlow<BybitOrderDto>(extraBufferCapacity = 64)
     val orderUpdates: SharedFlow<BybitOrderDto> = _orderUpdates.asSharedFlow()
 
@@ -171,6 +177,7 @@ class BybitWebSocketClient(
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
+                if (webSocket !== privateWs) return
                 try {
                     val json = JSONObject(text)
                     val op = json.optString("op", "")

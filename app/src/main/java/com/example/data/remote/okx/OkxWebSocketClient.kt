@@ -73,6 +73,12 @@ class OkxWebSocketClient(
     private var reconnectAttempts = 0
     private var pingJob: Job? = null
 
+    val isConnected: Boolean
+        get() = isRunning && (publicWs != null || privateWs != null)
+
+    val isPrivateConnected: Boolean
+        get() = isRunning && privateWs != null
+
     // Deduplication cache for filled order events (stores orderId -> timestamp)
     private val recentlyEmittedFilledOrders = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
@@ -200,6 +206,7 @@ class OkxWebSocketClient(
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
+                if (webSocket !== privateWs) return
                 try {
                     if (text == "pong") return
                     val json = JSONObject(text)

@@ -180,29 +180,33 @@ class TradingBotService : Service() {
         }
     }
 
-    private fun startBot() {
+    private fun startBot(forceReconnect: Boolean = false) {
         serviceScope.launch {
             if (preferences.isBotActive) {
-                val offset = repository.syncServerTime(preferences.isTestnet)
-                repository.log(LogLevel.INFO, "BotService", "Bybit Bot veri akışı başlatılıyor (Zaman farkı: $offset ms)")
-                wsClient.connect(
-                    key = preferences.apiKey,
-                    secret = preferences.apiSecret,
-                    testnet = preferences.isTestnet,
-                    timeOffsetMs = offset,
-                    symbol = preferences.bybitSymbol
-                )
+                if (forceReconnect || !wsClient.isConnected) {
+                    val offset = repository.syncServerTime(preferences.isTestnet)
+                    repository.log(LogLevel.INFO, "BotService", "Bybit Bot veri akışı başlatılıyor (Zaman farkı: $offset ms)")
+                    wsClient.connect(
+                        key = preferences.apiKey,
+                        secret = preferences.apiSecret,
+                        testnet = preferences.isTestnet,
+                        timeOffsetMs = offset,
+                        symbol = preferences.bybitSymbol
+                    )
+                }
             }
 
             if (preferences.isOkxBotActive) {
-                repository.log(LogLevel.INFO, "BotService", "OKX Bot veri akışı başlatılıyor (${preferences.okxSymbol})")
-                okxWsClient.connect(
-                    key = preferences.okxApiKey,
-                    secret = preferences.okxApiSecret,
-                    passphrase = preferences.okxApiPassphrase,
-                    testnet = preferences.isTestnet,
-                    symbol = preferences.okxSymbol
-                )
+                if (forceReconnect || !okxWsClient.isConnected) {
+                    repository.log(LogLevel.INFO, "BotService", "OKX Bot veri akışı başlatılıyor (${preferences.okxSymbol})")
+                    okxWsClient.connect(
+                        key = preferences.okxApiKey,
+                        secret = preferences.okxApiSecret,
+                        passphrase = preferences.okxApiPassphrase,
+                        testnet = preferences.isTestnet,
+                        symbol = preferences.okxSymbol
+                    )
+                }
             }
 
             if (isBotLoopRunning.compareAndSet(false, true)) {

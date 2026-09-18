@@ -101,3 +101,13 @@ data class OkxAssetBalance(
     @Json(name = "bal") val bal: String = "0",
     @Json(name = "availBal") val availBal: String = "0"
 )
+
+@JsonClass(generateAdapter = true)
+data class OkxInstrument(
+    @Json(name = "instId") val instId: String = "",
+    @Json(name = "baseCcy") val baseCcy: String = "",
+    @Json(name = "quoteCcy") val quoteCcy: String = "",
+    @Json(name = "lotSz") val lotSz: String = "0.01",
+    @Json(name = "minSz") val minSz: String = "0.01",
+    @Json(name = "tickSz") val tickSz: String = "0.0001"
+)

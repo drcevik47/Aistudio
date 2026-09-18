@@ -72,7 +72,11 @@ class BybitRepository(
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
         .addInterceptor(HttpLoggingInterceptor().apply {
-            level = HttpLoggingInterceptor.Level.BODY
+            level = if (com.example.BuildConfig.DEBUG) HttpLoggingInterceptor.Level.BODY else HttpLoggingInterceptor.Level.NONE
+            redactHeader("X-BAPI-API-KEY")
+            redactHeader("X-BAPI-SIGN")
+            redactHeader("X-BAPI-TIMESTAMP")
+            redactHeader("Authorization")
         })
         .build()
 
@@ -151,18 +155,48 @@ class BybitRepository(
         return if (hint.isNotBlank()) "Hata $retCode ($hint): $retMsg" else "Bybit Hata [$retCode]: $retMsg"
     }
 
+    private val instrumentInfoCache = java.util.concurrent.ConcurrentHashMap<String, com.example.data.remote.model.SpotInstrumentInfo>()
+
+    suspend fun getInstrumentInfo(symbol: String = preferences.bybitSymbol, isTestnet: Boolean = preferences.isTestnet): com.example.data.remote.model.SpotInstrumentInfo? = withContext(Dispatchers.IO) {
+        instrumentInfoCache[symbol]?.let { return@withContext it }
+        try {
+            val api = createApiService(isTestnet)
+            val response = api.getInstrumentsInfo(category = "spot", symbol = symbol)
+            if (response.isSuccessful && response.body()?.isSuccess == true) {
+                val info = response.body()?.result?.list?.firstOrNull { it.symbol.equals(symbol, ignoreCase = true) }
+                if (info != null) {
+                    instrumentInfoCache[symbol] = info
+                    return@withContext info
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("BybitRepo", "Failed to fetch instruments info: ${e.message}")
+        }
+        null
+    }
+
+    fun getPrecisionForSymbol(symbol: String = preferences.bybitSymbol): Pair<Int, Int> {
+        val info = instrumentInfoCache[symbol]
+        val qtyDecimals = info?.lotSizeFilter?.basePrecision?.let { com.example.bot.RebalanceEngine.stepToDecimals(it) }
+        val priceDecimals = info?.priceFilter?.tickSize?.let { com.example.bot.RebalanceEngine.stepToDecimals(it) }
+        return Pair(qtyDecimals ?: 2, priceDecimals ?: 4)
+    }
+
     /**
-     * Dynamically format order quantity based on coin price and precision so we never attempt to trade more than available balance.
+     * Dynamically format order quantity based on exchange lotSizeFilter and precision so we never attempt to trade more than available balance.
      */
-    fun formatMntQty(qty: Double, price: Double? = null): String {
-        val refPrice = price ?: preferences.lastRebalancePrice
-        val decimals = when {
-            refPrice >= 10000.0 -> 6
-            refPrice >= 1000.0 -> 5
-            refPrice >= 100.0 -> 4
-            refPrice >= 10.0 -> 3
-            refPrice >= 1.0 -> 2
-            else -> 1
+    fun formatMntQty(qty: Double, price: Double? = null, symbol: String = preferences.bybitSymbol): String {
+        val cachedPrecision = instrumentInfoCache[symbol]?.lotSizeFilter?.basePrecision?.let { com.example.bot.RebalanceEngine.stepToDecimals(it) }
+        val decimals = cachedPrecision ?: run {
+            val refPrice = price ?: preferences.lastRebalancePrice
+            when {
+                refPrice >= 10000.0 -> 6
+                refPrice >= 1000.0 -> 5
+                refPrice >= 100.0 -> 4
+                refPrice >= 10.0 -> 3
+                refPrice >= 1.0 -> 2
+                else -> 1
+            }
         }
         val factor = Math.pow(10.0, decimals.toDouble())
         val truncated = floor(qty * factor) / factor
@@ -172,10 +206,11 @@ class BybitRepository(
     }
 
     /**
-     * Dynamically format price based on price magnitude.
+     * Dynamically format price based on exchange priceFilter (tickSize).
      */
-    fun formatPrice(price: Double): String {
-        val decimals = when {
+    fun formatPrice(price: Double, symbol: String = preferences.bybitSymbol): String {
+        val cachedPrecision = instrumentInfoCache[symbol]?.priceFilter?.tickSize?.let { com.example.bot.RebalanceEngine.stepToDecimals(it) }
+        val decimals = cachedPrecision ?: when {
             price >= 1000.0 -> 2
             price >= 1.0 -> 4
             price >= 0.01 -> 6
@@ -834,11 +869,15 @@ class BybitRepository(
                 }
 
                 if (usdt > 0.0 && mnt > 0.0 && finalExecPrice > 0.0) {
+                    getInstrumentInfo(preferences.bybitSymbol)
+                    val (qtyPrec, pricePrec) = getPrecisionForSymbol(preferences.bybitSymbol)
                     val plan = RebalanceEngine.calculateGridOrders(
                         usdtBalance = usdt,
                         baseCoinBalance = mnt,
                         basePrice = finalExecPrice,
-                        stepPercent = step
+                        stepPercent = step,
+                        qtyPrecision = qtyPrec,
+                        pricePrecision = pricePrec
                     )
 
                     if (plan.isValid) {
@@ -968,11 +1007,15 @@ class BybitRepository(
                 }
 
                 if (usdt > 0.0 && mnt > 0.0) {
+                    getInstrumentInfo(preferences.bybitSymbol)
+                    val (qtyPrec, pricePrec) = getPrecisionForSymbol(preferences.bybitSymbol)
                     val plan = RebalanceEngine.calculateGridOrders(
                             usdtBalance = usdt,
                             baseCoinBalance = mnt,
                             basePrice = basePrice,
-                            stepPercent = preferences.stepPercent
+                            stepPercent = preferences.stepPercent,
+                            qtyPrecision = qtyPrec,
+                            pricePrecision = pricePrec
                         )
                         if (plan.isValid) {
                             val sellRes = createOrder("Sell", "Limit", plan.sellBaseQty, plan.sellLimitPrice, "GridStepUpSell")
@@ -1567,8 +1610,11 @@ class BybitRepository(
             // IDEMPOTENCY GUARD: Check if a trade for this orderId already exists in exchange_trades
             val alreadyInTrades = if (orderId.isNotBlank()) exchangeTradeDao.hasTradeForOrder(orderId) else false
             if (!alreadyInTrades) {
-                val execPrice = if (price > 0.0) price else existing?.price ?: 0.0
-                val execQty = if (qty > 0.0) qty else existing?.qty ?: 0.0
+                val execPrice = if (price > 0.0) price else existing?.price ?: preferences.lastRebalancePrice
+                var execQty = if (qty > 0.0) qty else existing?.qty ?: 0.0
+                if (execQty <= 0.0 && execPrice > 0.0) {
+                    execQty = 5.0 / execPrice
+                }
                 if (execPrice > 0.0 && execQty > 0.0) {
                     val execValue = execPrice * execQty
                     val execFee = execValue * 0.001

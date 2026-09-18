@@ -269,3 +269,32 @@ data class BybitOrderDto(
     val createdTimeMillis: Long get() = createdTime.toLongOrNull() ?: 0L
     val updatedTimeMillis: Long get() = updatedTime.toLongOrNull() ?: 0L
 }
+
+@JsonClass(generateAdapter = true)
+data class InstrumentsInfoResult(
+    @Json(name = "category") val category: String = "spot",
+    @Json(name = "list") val list: List<SpotInstrumentInfo> = emptyList()
+)
+
+@JsonClass(generateAdapter = true)
+data class SpotInstrumentInfo(
+    @Json(name = "symbol") val symbol: String = "",
+    @Json(name = "baseCoin") val baseCoin: String = "",
+    @Json(name = "quoteCoin") val quoteCoin: String = "",
+    @Json(name = "lotSizeFilter") val lotSizeFilter: LotSizeFilter? = null,
+    @Json(name = "priceFilter") val priceFilter: PriceFilter? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class LotSizeFilter(
+    @Json(name = "basePrecision") val basePrecision: String = "0.01",
+    @Json(name = "quotePrecision") val quotePrecision: String = "0.0001",
+    @Json(name = "minOrderQty") val minOrderQty: String = "0.01",
+    @Json(name = "maxOrderQty") val maxOrderQty: String = "1000000",
+    @Json(name = "minOrderAmt") val minOrderAmt: String = "5"
+)
+
+@JsonClass(generateAdapter = true)
+data class PriceFilter(
+    @Json(name = "tickSize") val tickSize: String = "0.0001"
+)

@@ -4,6 +4,8 @@ import com.example.data.remote.model.BybitApiResponse
 import com.example.data.remote.model.CancelOrderResult
 import com.example.data.remote.model.CreateOrderResult
 import com.example.data.remote.model.ExecutionListResult
+import com.example.data.remote.model.InstrumentsInfoResult
+import com.example.data.remote.model.KlineResult
 import com.example.data.remote.model.OpenOrdersResult
 import com.example.data.remote.model.ServerTimeResult
 import com.example.data.remote.model.TickersResult
@@ -17,6 +19,12 @@ import retrofit2.http.POST
 import retrofit2.http.Query
 
 interface BybitApiService {
+
+    @GET("/v5/market/instruments-info")
+    suspend fun getInstrumentsInfo(
+        @Query("category") category: String = "spot",
+        @Query("symbol") symbol: String? = null
+    ): Response<BybitApiResponse<InstrumentsInfoResult>>
 
     @GET("/v5/market/time")
     suspend fun getServerTime(): Response<BybitApiResponse<ServerTimeResult>>

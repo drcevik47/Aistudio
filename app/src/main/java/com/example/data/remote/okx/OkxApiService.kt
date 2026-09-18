@@ -5,6 +5,13 @@ import retrofit2.http.*
 
 interface OkxApiService {
     
+    // https://www.okx.com/api/v5/public/instruments?instType=SPOT&instId=MNT-USDT
+    @GET("/api/v5/public/instruments")
+    suspend fun getInstruments(
+        @Query("instType") instType: String = "SPOT",
+        @Query("instId") instId: String? = null
+    ): OkxResponse<OkxInstrument>
+
     // https://www.okx.com/api/v5/market/ticker?instId=MNT-USDT
     @GET("/api/v5/market/ticker")
     suspend fun getTicker(

@@ -159,11 +159,21 @@ object RebalanceEngine {
      *     sellBaseQty = targetUsdtTrade / sellPrice
      *     buyBaseQty = targetUsdtTrade / buyPrice
      */
+    fun stepToDecimals(stepStr: String?): Int {
+        if (stepStr.isNullOrBlank()) return 2
+        val dotIndex = stepStr.indexOf('.')
+        if (dotIndex < 0) return 0
+        val frac = stepStr.substring(dotIndex + 1).trimEnd('0')
+        return frac.length
+    }
+
     fun calculateGridOrders(
         usdtBalance: Double,
         baseCoinBalance: Double,
         basePrice: Double,
-        stepPercent: Double = 2.0
+        stepPercent: Double = 2.0,
+        qtyPrecision: Int? = null,
+        pricePrecision: Int? = null
     ): GridOrdersPlan {
         if (basePrice <= 0.0 || usdtBalance <= 0.0 || baseCoinBalance <= 0.0) {
             return GridOrdersPlan(
@@ -181,8 +191,15 @@ object RebalanceEngine {
         }
 
         val stepRatio = stepPercent / 100.0
-        val sellPrice = basePrice * (1.0 + stepRatio)
-        val buyPrice = basePrice * (1.0 - stepRatio)
+        val effectivePricePrecision = pricePrecision ?: when {
+            basePrice >= 100.0 -> 2
+            basePrice >= 1.0 -> 4
+            basePrice >= 0.01 -> 5
+            else -> 6
+        }
+        val priceFactor = Math.pow(10.0, effectivePricePrecision.toDouble())
+        val sellPrice = kotlin.math.round(basePrice * (1.0 + stepRatio) * priceFactor) / priceFactor
+        val buyPrice = kotlin.math.round(basePrice * (1.0 - stepRatio) * priceFactor) / priceFactor
 
         // Calculate total equity evaluated at the base price
         val totalEquityAtBase = usdtBalance + (baseCoinBalance * basePrice)
@@ -195,7 +212,7 @@ object RebalanceEngine {
         // Bybit/OKX Spot minimum order amount is ~5.0 USDT
         val minUsdtAmt = 5.0
 
-        val qtyDecimals = when {
+        val qtyDecimals = qtyPrecision ?: when {
             basePrice >= 10000.0 -> 6
             basePrice >= 1000.0 -> 5
             basePrice >= 100.0 -> 4

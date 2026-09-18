@@ -38,7 +38,12 @@ class OkxRepository(
         val isTestnet = preferences.isTestnet 
 
         val loggingInterceptor = HttpLoggingInterceptor().apply {
-            level = HttpLoggingInterceptor.Level.BODY 
+            level = if (com.example.BuildConfig.DEBUG) HttpLoggingInterceptor.Level.BODY else HttpLoggingInterceptor.Level.NONE
+            redactHeader("OK-ACCESS-KEY")
+            redactHeader("OK-ACCESS-SIGN")
+            redactHeader("OK-ACCESS-TIMESTAMP")
+            redactHeader("OK-ACCESS-PASSPHRASE")
+            redactHeader("Authorization")
         }
 
         val authInterceptor = OkxAuthInterceptor(apiKey, apiSecret, passphrase, isTestnet)
@@ -146,8 +151,42 @@ class OkxRepository(
         }
     }
 
-    fun formatPrice(price: Double): String {
-        val decimals = when {
+    private val okxInstrumentCache = java.util.concurrent.ConcurrentHashMap<String, com.example.data.remote.okx.model.OkxInstrument>()
+
+    suspend fun getInstrumentInfo(symbol: String = preferences.okxSymbol): com.example.data.remote.okx.model.OkxInstrument? = withContext(Dispatchers.IO) {
+        okxInstrumentCache[symbol]?.let { return@withContext it }
+        try {
+            val api = createApiService()
+            val response = api.getInstruments(instType = "SPOT", instId = symbol)
+            if (response.code == "0" && response.data.isNotEmpty()) {
+                val inst = response.data.first()
+                okxInstrumentCache[symbol] = inst
+                return@withContext inst
+            }
+        } catch (e: Exception) {
+            Log.w("OkxRepository", "Failed to fetch OKX instrument info: ${e.message}")
+        }
+        null
+    }
+
+    fun getPrecisionForSymbol(symbol: String = preferences.okxSymbol): Pair<Int, Int> {
+        val inst = okxInstrumentCache[symbol]
+        val qtyDecimals = inst?.lotSz?.let { com.example.bot.RebalanceEngine.stepToDecimals(it) }
+        val priceDecimals = inst?.tickSz?.let { com.example.bot.RebalanceEngine.stepToDecimals(it) }
+        return Pair(qtyDecimals ?: 2, priceDecimals ?: 4)
+    }
+
+    fun formatQty(qty: Double, symbol: String = preferences.okxSymbol): String {
+        val cachedPrecision = okxInstrumentCache[symbol]?.lotSz?.let { com.example.bot.RebalanceEngine.stepToDecimals(it) }
+        val decimals = cachedPrecision ?: 2
+        val factor = Math.pow(10.0, decimals.toDouble())
+        val truncated = kotlin.math.floor(qty * factor) / factor
+        return String.format(java.util.Locale.US, "%.${decimals}f", truncated)
+    }
+
+    fun formatPrice(price: Double, symbol: String = preferences.okxSymbol): String {
+        val cachedPrecision = okxInstrumentCache[symbol]?.tickSz?.let { com.example.bot.RebalanceEngine.stepToDecimals(it) }
+        val decimals = cachedPrecision ?: when {
             price >= 1000.0 -> 2
             price >= 1.0 -> 4
             price >= 0.01 -> 6
@@ -166,13 +205,14 @@ class OkxRepository(
         return withContext(Dispatchers.IO) {
             try {
                 val api = createApiService()
+                val formattedQty = formatQty(qty, preferences.okxSymbol)
                 val request = com.example.data.remote.okx.model.OkxOrderRequest(
                     instId = preferences.okxSymbol,
                     tdMode = "cash",
                     side = side.lowercase(),
                     ordType = orderType.lowercase(),
-                    sz = String.format(java.util.Locale.US, "%.8f", qty).trimEnd('0').trimEnd('.'),
-                    px = price?.let { formatPrice(it) },
+                    sz = formattedQty,
+                    px = price?.let { formatPrice(it, preferences.okxSymbol) },
                     tgtCcy = "base_ccy", // Force quantity to mean base coin (e.g. BTC)
                     clOrdId = clOrdId
                 )
@@ -259,13 +299,18 @@ class OkxRepository(
                 val finalExecPrice = if (expectedGridPrice > 0.0) expectedGridPrice else currentPrice
                 val execOrderId = missingOrderId.ifBlank { "okx_exec_${System.currentTimeMillis()}" }
 
-                log(LogLevel.SUCCESS, callerTag, "OKX Mutabakat: $missingSide emri GERÇEKLEŞMİŞ! Fiyat: $finalExecPrice ($execOrderId)")
+                // Retrieve expected quantity: check DB for tracked order or use opposite symmetric grid order size
+                val trackedOrderInDb = if (missingOrderId.isNotBlank()) database.orderDao().getOrderByOrderId(missingOrderId) else null
+                val remainingQty = remainingOrder.sz.toDoubleOrNull() ?: 0.0
+                val estimatedQty = trackedOrderInDb?.qty?.takeIf { it > 0.0 } ?: remainingQty
+
+                log(LogLevel.SUCCESS, callerTag, "OKX Mutabakat: $missingSide emri GERÇEKLEŞMİŞ! Fiyat: $finalExecPrice, Miktar: $estimatedQty ($execOrderId)")
 
                 recordOrderFilled(
                     orderId = execOrderId,
                     side = missingSide,
                     price = finalExecPrice,
-                    qty = 0.0,
+                    qty = estimatedQty,
                     triggerReason = "reconciliation"
                 )
 
@@ -288,11 +333,15 @@ class OkxRepository(
 
             val basePrice = if (preferences.okxLastRebalancePrice > 0.0) preferences.okxLastRebalancePrice else currentPrice
 
+            getInstrumentInfo(preferences.okxSymbol)
+            val (qtyPrec, pricePrec) = getPrecisionForSymbol(preferences.okxSymbol)
             val gridPlan = com.example.bot.RebalanceEngine.calculateGridOrders(
                 usdtBalance = usdtBalance,
                 baseCoinBalance = baseCoinBalance,
                 basePrice = basePrice,
-                stepPercent = preferences.okxStepPercent
+                stepPercent = preferences.okxStepPercent,
+                qtyPrecision = qtyPrec,
+                pricePrecision = pricePrec
             )
 
             if (!gridPlan.isValid) {
@@ -422,8 +471,12 @@ class OkxRepository(
 
                 val alreadyInTrades = if (orderId.isNotBlank()) exchangeTradeDao.hasTradeForOrder(orderId) else false
                 if (!alreadyInTrades) {
-                    val execPrice = if (price > 0.0) price else existing?.price ?: 0.0
-                    val execQty = if (qty > 0.0) qty else existing?.qty ?: 0.0
+                    val execPrice = if (price > 0.0) price else existing?.price ?: preferences.okxLastRebalancePrice
+                    var execQty = if (qty > 0.0) qty else existing?.qty ?: 0.0
+                    // Fallback calculation: If qty is still 0.0, compute from min trade notional (e.g. 5 USDT) or step
+                    if (execQty <= 0.0 && execPrice > 0.0) {
+                        execQty = 5.0 / execPrice
+                    }
                     if (execPrice > 0.0 && execQty > 0.0) {
                         val execValue = execPrice * execQty
                         val execFee = execValue * 0.001
@@ -525,13 +578,43 @@ class OkxRepository(
                     }
                 }
 
-                val remoteFills = allFills
+                // Deduplicate within-batch fills from getFills and getFillsHistory overlapping range
+                val remoteFills = allFills.distinctBy { fill ->
+                    fill.billId.ifBlank { fill.ordId }
+                }
                 val exchangeTradeDao = database.exchangeTradeDao()
                 val existingExecIds = exchangeTradeDao.getAllExecIds().toHashSet()
+                val existingOrderIds = exchangeTradeDao.getAllOrderIds().toHashSet()
                 val existingInDbCount = existingExecIds.size
-                
-                val newFills = remoteFills.filter { !existingExecIds.contains(it.billId) && !existingExecIds.contains(it.ordId) }
-                
+
+                val newFills = remoteFills.filter { fill ->
+                    val execId = fill.billId.ifBlank { fill.ordId }
+                    val ordId = fill.ordId
+                    !existingExecIds.contains(execId) &&
+                    !existingExecIds.contains("fill_$ordId") &&
+                    (ordId.isBlank() || !existingOrderIds.contains(ordId))
+                }
+
+                val newlyAddedExecutionDtos = newFills.map { fill ->
+                    com.example.data.remote.model.BybitExecutionDto(
+                        symbol = fill.instId,
+                        orderId = fill.ordId,
+                        side = fill.side.replaceFirstChar { it.uppercase() },
+                        orderPrice = fill.fillPx,
+                        orderQty = fill.fillSz,
+                        orderType = "Limit",
+                        execId = fill.billId.ifBlank { fill.ordId },
+                        execPrice = fill.fillPx,
+                        execQty = fill.fillSz,
+                        execType = "Trade",
+                        execValue = ((fill.fillPx.toDoubleOrNull() ?: 0.0) * (fill.fillSz.toDoubleOrNull() ?: 0.0)).toString(),
+                        execFee = fill.fee,
+                        feeCurrency = fill.feeCcy,
+                        execTime = fill.ts,
+                        isMaker = fill.execType.equals("M", ignoreCase = true)
+                    )
+                }
+
                 if (newFills.isNotEmpty()) {
                     val entitiesToInsert = newFills.map { fill ->
                         com.example.data.local.entity.ExchangeTradeEntity(
@@ -554,9 +637,9 @@ class OkxRepository(
                     }
                     exchangeTradeDao.insertTrades(entitiesToInsert)
                 }
-                
+
                 val totalInDb = exchangeTradeDao.getTradeCountSync()
-                
+
                 val okxExecutions = remoteFills.map { fill ->
                     com.example.data.remote.model.BybitExecutionDto(
                         symbol = fill.instId,
@@ -589,7 +672,7 @@ class OkxRepository(
                     existingInDb = existingInDbCount,
                     newlyAddedCount = newFills.size,
                     totalInDb = totalInDb,
-                    newlyAddedTrades = emptyList(),
+                    newlyAddedTrades = newlyAddedExecutionDtos,
                     analysis = okxAnalysis
                 )
                 Result.success(syncResult)
