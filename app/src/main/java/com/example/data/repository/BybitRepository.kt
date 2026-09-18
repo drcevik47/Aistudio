@@ -152,19 +152,36 @@ class BybitRepository(
     }
 
     /**
-     * MNT Spot basePrecision is 0.01 (2 decimal places).
-     * We floor truncate so we never attempt to trade more than available balance.
+     * Dynamically format order quantity based on coin price and precision so we never attempt to trade more than available balance.
      */
-    fun formatMntQty(qty: Double): String {
-        val truncated = floor(qty * 100.0) / 100.0
-        return String.format(Locale.US, "%.2f", truncated)
+    fun formatMntQty(qty: Double, price: Double? = null): String {
+        val refPrice = price ?: preferences.lastRebalancePrice
+        val decimals = when {
+            refPrice >= 10000.0 -> 6
+            refPrice >= 1000.0 -> 5
+            refPrice >= 100.0 -> 4
+            refPrice >= 10.0 -> 3
+            refPrice >= 1.0 -> 2
+            else -> 1
+        }
+        val factor = Math.pow(10.0, decimals.toDouble())
+        val truncated = floor(qty * factor) / factor
+        return String.format(Locale.US, "%.${decimals}f", truncated).trimEnd('0').let {
+            if (it.endsWith(".")) it + "0" else it
+        }
     }
 
     /**
-     * MNT Spot tickSize is 0.0001 (4 decimal places).
+     * Dynamically format price based on price magnitude.
      */
     fun formatPrice(price: Double): String {
-        return String.format(Locale.US, "%.4f", price)
+        val decimals = when {
+            price >= 1000.0 -> 2
+            price >= 1.0 -> 4
+            price >= 0.01 -> 6
+            else -> 8
+        }
+        return String.format(Locale.US, "%.${decimals}f", price).trimEnd('0').trimEnd('.')
     }
 
     private val logInsertCounter = java.util.concurrent.atomic.AtomicInteger(0)
@@ -320,9 +337,9 @@ class BybitRepository(
                 return@withContext Result.failure(Exception("API Key veya Secret eksik"))
             }
 
-            val formattedQty = formatMntQty(qty)
+            val formattedQty = formatMntQty(qty, price)
             if (formattedQty.toDoubleOrNull() == null || formattedQty.toDouble() <= 0.0) {
-                return@withContext Result.failure(Exception("Geçersiz miktar: $formattedQty MNT (Min: 0.01 MNT)"))
+                return@withContext Result.failure(Exception("Geçersiz miktar: $formattedQty ${preferences.bybitBaseCoin}"))
             }
 
             val formattedPrice = price?.let { formatPrice(it) }

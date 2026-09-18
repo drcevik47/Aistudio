@@ -27,15 +27,15 @@ class GreetingScreenshotTest {
     fun portfolio_card_screenshot() {
         val analysis = PortfolioAnalysis(
             usdtBalance = 500.0,
-            mntBalance = 500.0,
+            baseCoinBalance = 500.0,
             currentPrice = 1.0,
-            mntValueUsdt = 500.0,
+            baseValueUsdt = 500.0,
             totalEquityUsdt = 1000.0,
             usdtPercent = 50.0,
-            mntPercent = 50.0,
+            basePercent = 50.0,
             isBalanced5050 = true,
             requiredAction = RebalanceAction.BALANCED,
-            deltaMnt = 0.0,
+            deltaBase = 0.0,
             deltaUsdt = 0.0,
             description = "Portföy dengeli (%50.00 USDT / %50.00 MNT)"
         )
@@ -44,6 +44,7 @@ class GreetingScreenshotTest {
             MyApplicationTheme {
                 PortfolioCard(
                     analysis = analysis,
+                    activeBaseCoin = "MNT",
                     currentPrice = 1.0,
                     price24hChange = 2.45,
                     isBotActive = true,

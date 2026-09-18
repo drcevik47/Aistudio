@@ -25,15 +25,24 @@ import javax.crypto.spec.SecretKeySpec
 
 class OkxWebSocketClient(
     private val scope: CoroutineScope,
-    private val apiKey: String,
-    private val apiSecret: String,
-    private val passphrase: String,
-    private val isTestnet: Boolean,
-    private val activeSymbol: String // e.g. "BTC-USDT"
+    initialApiKey: String = "",
+    initialApiSecret: String = "",
+    initialPassphrase: String = "",
+    initialIsTestnet: Boolean = false,
+    initialActiveSymbol: String = "BTC-USDT"
 ) {
+    private var apiKey: String = initialApiKey
+    private var apiSecret: String = initialApiSecret
+    private var passphrase: String = initialPassphrase
+    private var isTestnet: Boolean = initialIsTestnet
+    private var activeSymbol: String = initialActiveSymbol
+
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
+        .writeTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(0, TimeUnit.MILLISECONDS)
+        .pingInterval(20, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
         .build()
 
     private var publicWs: WebSocket? = null
@@ -57,10 +66,23 @@ class OkxWebSocketClient(
     )
     val connectionStatus: SharedFlow<Pair<Boolean, String>> = _connectionStatus
 
+    @Volatile
+    private var isIntentionalDisconnect = false
     private var isRunning = false
     private var reconnectJob: Job? = null
     private var reconnectAttempts = 0
     private var pingJob: Job? = null
+
+    // Deduplication cache for filled order events (stores orderId -> timestamp)
+    private val recentlyEmittedFilledOrders = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    private fun shouldEmitFilledOrder(orderId: String): Boolean {
+        if (orderId.isBlank()) return true
+        val now = System.currentTimeMillis()
+        recentlyEmittedFilledOrders.entries.removeIf { now - it.value > 60_000L }
+        val prev = recentlyEmittedFilledOrders.putIfAbsent(orderId, now)
+        return prev == null
+    }
 
     private fun getPublicWsUrl(): String {
         return if (isTestnet) "wss://wspap.okx.com:8443/ws/v5/public?brokerId=9999"
@@ -72,22 +94,39 @@ class OkxWebSocketClient(
         else "wss://ws.okx.com:8443/ws/v5/private"
     }
 
-    fun start() {
-        if (isRunning) return
-        isRunning = true
-        reconnectAttempts = 0
+    fun connect(
+        key: String = apiKey,
+        secret: String = apiSecret,
+        passphrase: String = this.passphrase,
+        testnet: Boolean = isTestnet,
+        symbol: String = activeSymbol
+    ) {
+        this.apiKey = key
+        this.apiSecret = secret
+        this.passphrase = passphrase
+        this.isTestnet = testnet
+        this.activeSymbol = symbol
+        this.isRunning = true
+        this.isIntentionalDisconnect = false
+        this.reconnectAttempts = 0
         Log.d("OkxWS", "Starting OKX WebSockets for symbol: $activeSymbol")
+        disconnectInternal()
         startPublicWs()
-        if (apiKey.isNotBlank() && apiSecret.isNotBlank() && passphrase.isNotBlank()) {
+        if (apiKey.isNotBlank() && apiSecret.isNotBlank() && this.passphrase.isNotBlank()) {
             startPrivateWs()
         }
         startPingLoop()
     }
 
+    fun start() {
+        connect()
+    }
+
     private fun startPublicWs() {
         val request = Request.Builder().url(getPublicWsUrl()).build()
-        publicWs = client.newWebSocket(request, object : WebSocketListener() {
+        val ws = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                if (webSocket !== publicWs) return
                 Log.d("OkxWS", "Public WS Connected, subscribing to tickers: $activeSymbol")
                 val subMsg = JSONObject().apply {
                     put("op", "subscribe")
@@ -102,6 +141,7 @@ class OkxWebSocketClient(
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
+                if (webSocket !== publicWs) return
                 try {
                     if (text == "pong") return
                     val json = JSONObject(text)
@@ -122,20 +162,24 @@ class OkxWebSocketClient(
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                if (isIntentionalDisconnect || !isRunning || webSocket !== publicWs) return
                 Log.e("OkxWS", "Public WS Failure: ${t.message}")
                 scheduleReconnect()
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                if (isRunning) scheduleReconnect()
+                if (isIntentionalDisconnect || !isRunning || webSocket !== publicWs) return
+                scheduleReconnect()
             }
         })
+        publicWs = ws
     }
 
     private fun startPrivateWs() {
         val request = Request.Builder().url(getPrivateWsUrl()).build()
-        privateWs = client.newWebSocket(request, object : WebSocketListener() {
+        val ws = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                if (webSocket !== privateWs) return
                 Log.d("OkxWS", "Private WS Connected, authenticating...")
                 val timestamp = (System.currentTimeMillis() / 1000).toString()
                 val signMessage = timestamp + "GET" + "/users/self/verify"
@@ -206,7 +250,9 @@ class OkxWebSocketClient(
                                     fee = item.optString("fee", ""),
                                     feeCcy = item.optString("feeCcy", "")
                                 )
-                                _orderUpdates.tryEmit(order)
+                                if (!order.state.equals("filled", ignoreCase = true) || shouldEmitFilledOrder(order.ordId)) {
+                                    _orderUpdates.tryEmit(order)
+                                }
                             }
                         }
                     }
@@ -216,14 +262,17 @@ class OkxWebSocketClient(
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                if (isIntentionalDisconnect || !isRunning || webSocket !== privateWs) return
                 Log.e("OkxWS", "Private WS Failure: ${t.message}")
                 scheduleReconnect()
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                if (isRunning) scheduleReconnect()
+                if (isIntentionalDisconnect || !isRunning || webSocket !== privateWs) return
+                scheduleReconnect()
             }
         })
+        privateWs = ws
     }
 
     private fun startPingLoop() {
@@ -242,16 +291,15 @@ class OkxWebSocketClient(
     }
 
     private fun scheduleReconnect() {
-        if (!isRunning) return
+        if (!isRunning || isIntentionalDisconnect) return
         if (reconnectJob?.isActive == true) return
         reconnectJob = scope.launch(Dispatchers.IO) {
             val backoffMs = (reconnectAttempts * 2000L).coerceIn(2000L, 8000L)
             reconnectAttempts++
             delay(backoffMs)
-            if (isRunning) {
+            if (isRunning && !isIntentionalDisconnect) {
                 Log.d("OkxWS", "Reconnecting OKX WebSockets (attempt $reconnectAttempts)...")
-                disconnect()
-                isRunning = true
+                disconnectInternal()
                 startPublicWs()
                 if (apiKey.isNotBlank() && apiSecret.isNotBlank() && passphrase.isNotBlank()) {
                     startPrivateWs()
@@ -261,7 +309,11 @@ class OkxWebSocketClient(
     }
 
     fun disconnect() {
-        isRunning = false
+        isIntentionalDisconnect = true
+        disconnectInternal()
+    }
+
+    private fun disconnectInternal() {
         val wsPublic = publicWs
         val wsPrivate = privateWs
         publicWs = null
@@ -275,9 +327,11 @@ class OkxWebSocketClient(
     }
 
     fun stop() {
+        isRunning = false
+        isIntentionalDisconnect = true
         pingJob?.cancel()
         reconnectJob?.cancel()
-        disconnect()
+        disconnectInternal()
     }
 
     private fun generateSignature(secret: String, message: String): String {

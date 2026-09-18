@@ -27,6 +27,7 @@ class BybitWebSocketClient(
         .connectTimeout(15, TimeUnit.SECONDS)
         .writeTimeout(15, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.MILLISECONDS)
+        .pingInterval(20, TimeUnit.SECONDS)
         .retryOnConnectionFailure(true)
         .build()
 
@@ -74,9 +75,9 @@ class BybitWebSocketClient(
         this.serverTimeOffsetMs = timeOffsetMs
         this.activeSymbol = symbol
         this.isRunning = true
+        this.isIntentionalDisconnect = false
 
-        disconnect()
-        isIntentionalDisconnect = false
+        disconnectInternal()
         startPublicWs()
         if (key.isNotBlank() && secret.isNotBlank()) {
             startPrivateWs()
@@ -96,8 +97,9 @@ class BybitWebSocketClient(
 
     private fun startPublicWs() {
         val request = Request.Builder().url(getPublicWsUrl()).build()
-        publicWs = client.newWebSocket(request, object : WebSocketListener() {
+        val ws = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                if (webSocket !== publicWs) return
                 Log.d("BybitWS", "Public WS Connected")
                 reconnectAttempts = 0
                 val subMsg = JSONObject().apply {
@@ -109,6 +111,7 @@ class BybitWebSocketClient(
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
+                if (webSocket !== publicWs) return
                 try {
                     val json = JSONObject(text)
                     val op = json.optString("op", "")
@@ -133,6 +136,7 @@ class BybitWebSocketClient(
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                if (isIntentionalDisconnect || !isRunning || webSocket !== publicWs) return
                 Log.e("BybitWS", "Public WS Failure: ${t.message}")
                 _connectionStatus.tryEmit(Pair(false, t.message ?: "Bağlantı koptu"))
                 scheduleReconnect()
@@ -140,17 +144,18 @@ class BybitWebSocketClient(
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 Log.d("BybitWS", "Public WS Closed: $reason")
-                if (isRunning && !isIntentionalDisconnect) {
-                    scheduleReconnect()
-                }
+                if (isIntentionalDisconnect || !isRunning || webSocket !== publicWs) return
+                scheduleReconnect()
             }
         })
+        publicWs = ws
     }
 
     private fun startPrivateWs() {
         val request = Request.Builder().url(getPrivateWsUrl()).build()
-        privateWs = client.newWebSocket(request, object : WebSocketListener() {
+        val ws = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                if (webSocket !== privateWs) return
                 Log.d("BybitWS", "Private WS Connected, authenticating...")
                 val expires = System.currentTimeMillis() + serverTimeOffsetMs + 10000
                 val signature = BybitSigner.signWebSocket(expires, apiSecret)
@@ -253,17 +258,18 @@ class BybitWebSocketClient(
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                if (isIntentionalDisconnect || !isRunning || webSocket !== privateWs) return
                 Log.e("BybitWS", "Private WS Failure: ${t.message}")
                 scheduleReconnect()
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 Log.d("BybitWS", "Private WS Closed: $reason")
-                if (isRunning && !isIntentionalDisconnect) {
-                    scheduleReconnect()
-                }
+                if (isIntentionalDisconnect || !isRunning || webSocket !== privateWs) return
+                scheduleReconnect()
             }
         })
+        privateWs = ws
     }
 
     private fun startPingLoop() {
@@ -283,16 +289,15 @@ class BybitWebSocketClient(
     }
 
     private fun scheduleReconnect() {
-        if (!isRunning) return
+        if (!isRunning || isIntentionalDisconnect) return
         if (reconnectJob?.isActive == true) return // Already reconnecting
         reconnectJob = scope.launch(Dispatchers.IO) {
             val backoffMs = (reconnectAttempts * 2000L).coerceIn(2000L, 8000L)
             reconnectAttempts++
             delay(backoffMs)
-            if (isRunning) {
+            if (isRunning && !isIntentionalDisconnect) {
                 Log.d("BybitWS", "Reconnecting WebSockets (attempt $reconnectAttempts after ${backoffMs}ms)...")
-                disconnect()
-                isIntentionalDisconnect = false
+                disconnectInternal()
                 startPublicWs()
                 if (apiKey.isNotBlank() && apiSecret.isNotBlank()) {
                     startPrivateWs()
@@ -303,6 +308,10 @@ class BybitWebSocketClient(
 
     fun disconnect() {
         isIntentionalDisconnect = true
+        disconnectInternal()
+    }
+
+    private fun disconnectInternal() {
         val wsPublic = publicWs
         val wsPrivate = privateWs
         publicWs = null
@@ -320,6 +329,6 @@ class BybitWebSocketClient(
         isIntentionalDisconnect = true
         pingJob?.cancel()
         reconnectJob?.cancel()
-        disconnect()
+        disconnectInternal()
     }
 }

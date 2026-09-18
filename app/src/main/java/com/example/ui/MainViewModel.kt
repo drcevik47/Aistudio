@@ -165,7 +165,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         if (preferences.isConfigured || preferences.okxApiKey.isNotBlank()) {
-            if (preferences.isBotActive) {
+            if (preferences.isBotActive || preferences.isOkxBotActive) {
                 try {
                     TradingBotService.start(getApplication())
                 } catch (e: Exception) {
@@ -176,7 +176,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             viewModelScope.launch(Dispatchers.IO) {
                 repository.pruneLogs()
-                repository.syncUnfilledOrdersWithExchange()
+                if (preferences.isConfigured) {
+                    repository.syncUnfilledOrdersWithExchange()
+                }
             }
             refreshData()
         } else {
@@ -201,18 +203,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun silentRefresh(cycleCount: Int = 0) = kotlinx.coroutines.coroutineScope {
         try {
             val syncDeferred = async {
-                if (cycleCount % 4 == 0) repository.syncUnfilledOrdersWithExchange()
+                if (preferences.isConfigured && cycleCount % 4 == 0) repository.syncUnfilledOrdersWithExchange()
             }
             val pruneDeferred = async {
                 if (cycleCount % 30 == 0) repository.pruneLogs()
             }
 
-            val tickerDeferred = async { repository.getTicker() }
+            val tickerDeferred = async { if (preferences.isConfigured) repository.getTicker() else null }
             val balanceDeferred = async {
-                if (cycleCount % 2 == 0 || _uiState.value.usdtBalance <= 0.0) repository.getWalletBalance() else null
+                if (preferences.isConfigured && (cycleCount % 2 == 0 || _uiState.value.usdtBalance <= 0.0)) repository.getWalletBalance() else null
             }
             val ordersDeferred = async {
-                if (cycleCount % 2 == 1 || _uiState.value.activeOrders.isEmpty()) repository.getOpenOrders() else null
+                if (preferences.isConfigured && (cycleCount % 2 == 1 || _uiState.value.activeOrders.isEmpty())) repository.getOpenOrders() else null
             }
             val okxDeferred = async { fetchOkxData(cycleCount) }
 
@@ -222,7 +224,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             var currentPrice = _uiState.value.currentPrice
             var priceChange = _uiState.value.price24hChange
-            tickerDeferred.await().onSuccess { ticker ->
+            tickerDeferred.await()?.onSuccess { ticker ->
                 currentPrice = ticker.currentPrice
                 priceChange = ticker.changePercent24h
             }
@@ -388,9 +390,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun refreshData() {
         viewModelScope.launch(Dispatchers.IO) {
             _uiState.update { it.copy(isLoading = true, errorMessage = null) }
-            repository.syncServerTime()
+            if (preferences.isConfigured) {
+                repository.syncServerTime()
+            }
 
-            if (preferences.isBotActive) {
+            if (preferences.isBotActive || preferences.isOkxBotActive) {
                 try {
                     TradingBotService.start(getApplication())
                 } catch (e: Exception) {
@@ -404,13 +408,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val reconDeferred = async {
                 if (preferences.isBotActive) repository.reconcileGridOrders(callerTag = "ManuelYenile") else null
             }
-            val tickerDeferred = async { repository.getTicker() }
-            val balanceDeferred = async { repository.getWalletBalance() }
-            val ordersDeferred = async { repository.getOpenOrders() }
+            val okxReconDeferred = async {
+                if (preferences.isOkxBotActive) okxRepository.reconcileGridOrders(callerTag = "ManuelYenile") else null
+            }
+            val tickerDeferred = async { if (preferences.isConfigured) repository.getTicker() else null }
+            val balanceDeferred = async { if (preferences.isConfigured) repository.getWalletBalance() else null }
+            val ordersDeferred = async { if (preferences.isConfigured) repository.getOpenOrders() else null }
             val okxDeferred = async { fetchOkxData(0) }
 
-            // Await Recon
+            // Await Reconciliations
             reconDeferred.await()?.onSuccess { rec ->
+                if (rec.executedOrderFound) {
+                    _uiState.update { it.copy(statusMessage = rec.message) }
+                }
+            }
+            okxReconDeferred.await()?.onSuccess { rec ->
                 if (rec.executedOrderFound) {
                     _uiState.update { it.copy(statusMessage = rec.message) }
                 }
@@ -418,25 +430,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             var currentPrice = _uiState.value.currentPrice
             var priceChange = _uiState.value.price24hChange
-            tickerDeferred.await().onSuccess { ticker ->
+            tickerDeferred.await()?.onSuccess { ticker ->
                 currentPrice = ticker.currentPrice
                 priceChange = ticker.changePercent24h
-            }.onFailure { err ->
+            }?.onFailure { err ->
                 repository.log(LogLevel.WARN, "Market", "Ticker alınamadı: ${err.message}")
             }
 
             var usdt = _uiState.value.usdtBalance
             var baseQty = _uiState.value.baseCoinBalance
-            balanceDeferred.await().onSuccess { map ->
+            balanceDeferred.await()?.onSuccess { map ->
                 usdt = map["USDT"]?.quantity ?: 0.0
                 baseQty = map[preferences.bybitBaseCoin]?.quantity ?: 0.0
-            }.onFailure { err ->
-                _uiState.update { it.copy(errorMessage = "Bakiye çekilemedi: ${err.message}", isLoading = false) }
-                return@launch
+            }?.onFailure { err ->
+                if (preferences.activeExchange == "BYBIT") {
+                    _uiState.update { it.copy(errorMessage = "Bybit bakiye çekilemedi: ${err.message}") }
+                }
             }
 
             var openOrders = emptyList<BybitOrderDto>()
-            ordersDeferred.await().onSuccess { list ->
+            ordersDeferred.await()?.onSuccess { list ->
                 openOrders = list
             }
 
@@ -653,9 +666,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             preferences.okxActiveBuyOrderId = ""
             preferences.okxActiveSellOrderId = ""
             
-            if (!preferences.isBotActive) {
-                com.example.service.TradingBotService.stop(getApplication())
-            }
+            com.example.service.TradingBotService.stop(getApplication(), com.example.service.TradingBotService.EXTRA_EXCHANGE_OKX)
 
             // We cancel the specific OKX active orders
             val pendingRes = okxRepository.getPendingOrders()
@@ -712,12 +723,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         preferences.isBotActive = false
         preferences.lastRebalancePrice = 0.0
         
-        if (!preferences.isOkxBotActive) {
-            TradingBotService.stop(getApplication())
-        }
+        TradingBotService.stop(getApplication(), TradingBotService.EXTRA_EXCHANGE_BYBIT)
         
         viewModelScope.launch(Dispatchers.IO) {
-            repository.log(LogLevel.INFO, "System", "Bot durduruldu")
+            repository.log(LogLevel.INFO, "System", "Bybit Bot durduruldu")
             _uiState.update { it.copy(isBotActive = false, lastRebalancePrice = 0.0) }
             cancelAllOrders()
         }
@@ -831,7 +840,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val okxResult = app.okxRepository.syncTradesFromExchange(
                     symbol = preferences.okxSymbol,
                     daysBack = daysBack,
-                    startTimestamp = startTimestamp
+                    startTimestamp = startTimestamp,
+                    onProgress = { currentWindow, totalWindows, fetchedCount ->
+                        _tradeAnalysis.update {
+                            it.copy(progressText = "OKX: Sayfa $currentWindow / $totalWindows taranıyor ($fetchedCount işlem)...")
+                        }
+                    }
                 )
                 okxSyncRes = okxResult.getOrNull()
                 okxAdded = okxSyncRes?.newlyAddedCount ?: 0

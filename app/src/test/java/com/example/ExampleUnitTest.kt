@@ -10,50 +10,50 @@ class ExampleUnitTest {
 
     @Test
     fun testRebalanceEngine_EqualBalances_IsBalanced() {
-        // Price = 1.0, USDT = 100, MNT = 100 -> Total = 200 (50% / 50%)
+        // Price = 1.0, USDT = 100, BASE = 100 -> Total = 200 (50% / 50%)
         val analysis = RebalanceEngine.analyzePortfolio(
             usdtBalance = 100.0,
-            mntBalance = 100.0,
+            baseCoinBalance = 100.0,
             currentPrice = 1.0
         )
         assertTrue(analysis.isBalanced5050)
         assertEquals(RebalanceAction.BALANCED, analysis.requiredAction)
         assertEquals(50.0, analysis.usdtPercent, 0.01)
-        assertEquals(50.0, analysis.mntPercent, 0.01)
-        assertEquals(0.0, analysis.deltaMnt, 0.01)
+        assertEquals(50.0, analysis.basePercent, 0.01)
+        assertEquals(0.0, analysis.deltaBase, 0.01)
     }
 
     @Test
     fun testRebalanceEngine_USDTExcess_RequiresBuyMNT() {
-        // Price = 2.0, USDT = 300, MNT = 50 (value = 100) -> Total = 400
-        // Target half = 200 USDT each -> Need 100 MNT total (currently 50) -> BUY 50 MNT (100 USDT)
+        // Price = 2.0, USDT = 300, BASE = 50 (value = 100) -> Total = 400
+        // Target half = 200 USDT each -> Need 100 BASE total (currently 50) -> BUY 50 BASE (100 USDT)
         val analysis = RebalanceEngine.analyzePortfolio(
             usdtBalance = 300.0,
-            mntBalance = 50.0,
+            baseCoinBalance = 50.0,
             currentPrice = 2.0
         )
         assertFalse(analysis.isBalanced5050)
-        assertEquals(RebalanceAction.BUY_MNT, analysis.requiredAction)
+        assertEquals(RebalanceAction.BUY_BASE, analysis.requiredAction)
         assertEquals(75.0, analysis.usdtPercent, 0.01)
-        assertEquals(25.0, analysis.mntPercent, 0.01)
-        assertEquals(50.0, analysis.deltaMnt, 0.01)
+        assertEquals(25.0, analysis.basePercent, 0.01)
+        assertEquals(50.0, analysis.deltaBase, 0.01)
         assertEquals(100.0, analysis.deltaUsdt, 0.01)
     }
 
     @Test
     fun testRebalanceEngine_MNTExcess_RequiresSellMNT() {
-        // Price = 2.0, USDT = 100, MNT = 150 (value = 300) -> Total = 400
-        // Target half = 200 USDT each -> Need 100 MNT total (currently 150) -> SELL 50 MNT (100 USDT)
+        // Price = 2.0, USDT = 100, BASE = 150 (value = 300) -> Total = 400
+        // Target half = 200 USDT each -> Need 100 BASE total (currently 150) -> SELL 50 BASE (100 USDT)
         val analysis = RebalanceEngine.analyzePortfolio(
             usdtBalance = 100.0,
-            mntBalance = 150.0,
+            baseCoinBalance = 150.0,
             currentPrice = 2.0
         )
         assertFalse(analysis.isBalanced5050)
-        assertEquals(RebalanceAction.SELL_MNT, analysis.requiredAction)
+        assertEquals(RebalanceAction.SELL_BASE, analysis.requiredAction)
         assertEquals(25.0, analysis.usdtPercent, 0.01)
-        assertEquals(75.0, analysis.mntPercent, 0.01)
-        assertEquals(50.0, analysis.deltaMnt, 0.01)
+        assertEquals(75.0, analysis.basePercent, 0.01)
+        assertEquals(50.0, analysis.deltaBase, 0.01)
         assertEquals(100.0, analysis.deltaUsdt, 0.01)
     }
 
@@ -61,10 +61,10 @@ class ExampleUnitTest {
     fun testRebalanceEngine_CalculateGridOrders_Step2Percent() {
         val basePrice = 1.0
         val usdt = 1000.0
-        val mnt = 1000.0
+        val baseCoin = 1000.0
         val plan = RebalanceEngine.calculateGridOrders(
             usdtBalance = usdt,
-            mntBalance = mnt,
+            baseCoinBalance = baseCoin,
             basePrice = basePrice,
             stepPercent = 2.0
         )
@@ -72,9 +72,9 @@ class ExampleUnitTest {
         assertTrue(plan.isValid)
         assertEquals(1.02, plan.sellLimitPrice, 0.0001)
         assertEquals(0.98, plan.buyLimitPrice, 0.0001)
-        assertTrue(plan.sellMntQty > 0.0)
-        assertTrue(plan.buyMntQty > 0.0)
-        // For 1000 USDT and 1000 MNT at 1.0 base (Total = 2000 USDT),
+        assertTrue(plan.sellBaseQty > 0.0)
+        assertTrue(plan.buyBaseQty > 0.0)
+        // For 1000 USDT and 1000 BASE at 1.0 base (Total = 2000 USDT),
         // at 2% step: target trade is (1000 * 0.02) / 2 = 10.0 USDT
         assertEquals(10.0, plan.sellUsdtValue, 0.01)
         assertEquals(10.0, plan.buyUsdtValue, 0.01)
@@ -84,10 +84,10 @@ class ExampleUnitTest {
 
     @Test
     fun testRebalanceEngine_SmallBalance_DoesNotDistortMath_MarksInvalidWithMinExplanation() {
-        // 100 USDT & 100 MNT gives 1.0 USDT order at 2% step, which is below Bybit's 5 USDT limit
+        // 100 USDT & 100 BASE gives 1.0 USDT order at 2% step, which is below Bybit's 5 USDT limit
         val plan = RebalanceEngine.calculateGridOrders(
             usdtBalance = 100.0,
-            mntBalance = 100.0,
+            baseCoinBalance = 100.0,
             basePrice = 1.0,
             stepPercent = 2.0
         )
@@ -100,46 +100,46 @@ class ExampleUnitTest {
 
     @Test
     fun testRebalanceEngine_MathematicalProof_ExecutionAchievesExact5050() {
-        // Initial state: 1000 MNT, 1000 USDT at 1.00 USDT price (Total = 2000 USDT, exact 50/50)
-        val initialMnt = 1000.0
+        // Initial state: 1000 BASE, 1000 USDT at 1.00 USDT price (Total = 2000 USDT, exact 50/50)
+        val initialBase = 1000.0
         val initialUsdt = 1000.0
         val basePrice = 1.0
         val stepPercent = 2.0
 
         val plan = RebalanceEngine.calculateGridOrders(
             usdtBalance = initialUsdt,
-            mntBalance = initialMnt,
+            baseCoinBalance = initialBase,
             basePrice = basePrice,
             stepPercent = stepPercent
         )
 
         assertTrue(plan.isValid)
-        // Both orders should trade exactly 10 USDT of MNT
+        // Both orders should trade exactly 10 USDT of BASE
         assertEquals(10.0, plan.sellUsdtValue, 0.01)
         assertEquals(10.0, plan.buyUsdtValue, 0.01)
 
         // Case 1: Price goes UP +2% to sellLimitPrice (1.02) and Sell Order Fills
-        val newMntAfterSell = initialMnt - plan.sellMntQty
-        val newUsdtAfterSell = initialUsdt + (plan.sellMntQty * plan.sellLimitPrice)
-        val mntValueAfterSell = newMntAfterSell * plan.sellLimitPrice
-        val totalEquityAfterSell = mntValueAfterSell + newUsdtAfterSell
+        val newBaseAfterSell = initialBase - plan.sellBaseQty
+        val newUsdtAfterSell = initialUsdt + (plan.sellBaseQty * plan.sellLimitPrice)
+        val baseValueAfterSell = newBaseAfterSell * plan.sellLimitPrice
+        val totalEquityAfterSell = baseValueAfterSell + newUsdtAfterSell
 
         // Total equity becomes 1000 + 1000*1.02 = 2020 USDT. Target 50% = 1010 USDT.
         assertEquals(1010.0, newUsdtAfterSell, 0.01)
-        assertEquals(1010.0, mntValueAfterSell, 0.05)
-        assertEquals(50.0, (mntValueAfterSell / totalEquityAfterSell) * 100.0, 0.05)
+        assertEquals(1010.0, baseValueAfterSell, 0.05)
+        assertEquals(50.0, (baseValueAfterSell / totalEquityAfterSell) * 100.0, 0.05)
         assertEquals(50.0, (newUsdtAfterSell / totalEquityAfterSell) * 100.0, 0.05)
 
         // Case 2: Price goes DOWN -2% to buyLimitPrice (0.98) and Buy Order Fills
-        val newMntAfterBuy = initialMnt + plan.buyMntQty
-        val newUsdtAfterBuy = initialUsdt - (plan.buyMntQty * plan.buyLimitPrice)
-        val mntValueAfterBuy = newMntAfterBuy * plan.buyLimitPrice
-        val totalEquityAfterBuy = mntValueAfterBuy + newUsdtAfterBuy
+        val newBaseAfterBuy = initialBase + plan.buyBaseQty
+        val newUsdtAfterBuy = initialUsdt - (plan.buyBaseQty * plan.buyLimitPrice)
+        val baseValueAfterBuy = newBaseAfterBuy * plan.buyLimitPrice
+        val totalEquityAfterBuy = baseValueAfterBuy + newUsdtAfterBuy
 
         // Total equity becomes 1000 + 1000*0.98 = 1980 USDT. Target 50% = 990 USDT.
         assertEquals(990.0, newUsdtAfterBuy, 0.01)
-        assertEquals(990.0, mntValueAfterBuy, 0.05)
-        assertEquals(50.0, (mntValueAfterBuy / totalEquityAfterBuy) * 100.0, 0.05)
+        assertEquals(990.0, baseValueAfterBuy, 0.05)
+        assertEquals(50.0, (baseValueAfterBuy / totalEquityAfterBuy) * 100.0, 0.05)
         assertEquals(50.0, (newUsdtAfterBuy / totalEquityAfterBuy) * 100.0, 0.05)
     }
 
@@ -166,14 +166,14 @@ class ExampleUnitTest {
     @Test
     fun testRebalanceEngine_NextCycleUsesLastTradedPriceAsNewBasePrice() {
         // Initial state at Base Price = 1.00 USDT
-        val initialMnt = 1000.0
+        val initialBase = 1000.0
         val initialUsdt = 1000.0
         val basePrice1 = 1.00
         val stepPercent = 2.0
 
         val cycle1Plan = RebalanceEngine.calculateGridOrders(
             usdtBalance = initialUsdt,
-            mntBalance = initialMnt,
+            baseCoinBalance = initialBase,
             basePrice = basePrice1,
             stepPercent = stepPercent
         )
@@ -183,13 +183,13 @@ class ExampleUnitTest {
         assertEquals(1.02, lastExecutedPrice, 0.0001)
 
         // Balances settle after 1 second
-        val settledMnt = initialMnt - cycle1Plan.sellMntQty
-        val settledUsdt = initialUsdt + (cycle1Plan.sellMntQty * lastExecutedPrice)
+        val settledBase = initialBase - cycle1Plan.sellBaseQty
+        val settledUsdt = initialUsdt + (cycle1Plan.sellBaseQty * lastExecutedPrice)
 
         // New cycle MUST use lastExecutedPrice (1.02) as the new base price
         val cycle2Plan = RebalanceEngine.calculateGridOrders(
             usdtBalance = settledUsdt,
-            mntBalance = settledMnt,
+            baseCoinBalance = settledBase,
             basePrice = lastExecutedPrice, // User requirement: new base price is last executed trade price
             stepPercent = stepPercent
         )

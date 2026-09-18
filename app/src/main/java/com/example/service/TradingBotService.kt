@@ -51,6 +51,10 @@ class TradingBotService : Service() {
     private var lastUsdtBalance: Double = 0.0
     private var lastBaseBalance: Double = 0.0
 
+    private var currentOkxBasePrice: Double = 0.0
+    private var lastOkxUsdtBalance: Double = 0.0
+    private var lastOkxBaseBalance: Double = 0.0
+
     override fun onCreate() {
         super.onCreate()
         val app = application as BybitBotApp
@@ -61,26 +65,78 @@ class TradingBotService : Service() {
         wsClient = BybitWebSocketClient(serviceScope)
         okxWsClient = OkxWebSocketClient(
             scope = serviceScope,
-            apiKey = preferences.okxApiKey,
-            apiSecret = preferences.okxApiSecret,
-            passphrase = preferences.okxApiPassphrase,
-            isTestnet = preferences.isTestnet,
-            activeSymbol = preferences.okxSymbol
+            initialApiKey = preferences.okxApiKey,
+            initialApiSecret = preferences.okxApiSecret,
+            initialPassphrase = preferences.okxApiPassphrase,
+            initialIsTestnet = preferences.isTestnet,
+            initialActiveSymbol = preferences.okxSymbol
         )
+        setupSocketListeners()
         createNotificationChannels()
         acquireWakeLock()
+    }
+
+    private fun setupSocketListeners() {
+        serviceScope.launch {
+            wsClient.priceUpdates.collect { price ->
+                if (price > 0.0 && price != currentBasePrice) {
+                    currentBasePrice = price
+                }
+            }
+        }
+        serviceScope.launch {
+            okxWsClient.priceUpdates.collect { price ->
+                if (price > 0.0 && price != currentOkxBasePrice) {
+                    currentOkxBasePrice = price
+                }
+            }
+        }
+        serviceScope.launch {
+            wsClient.orderUpdates.collect { order ->
+                handleOrderUpdate(order)
+            }
+        }
+        serviceScope.launch {
+            okxWsClient.orderUpdates.collect { order ->
+                handleOkxOrderUpdate(order)
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action
         when (action) {
             ACTION_STOP_BOT -> {
-                preferences.isBotActive = false
-                preferences.isOkxBotActive = false
-                stopBot()
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
-                return START_NOT_STICKY
+                val targetExchange = intent?.getStringExtra(EXTRA_EXCHANGE) ?: EXTRA_EXCHANGE_ALL
+                when (targetExchange) {
+                    EXTRA_EXCHANGE_BYBIT -> {
+                        preferences.isBotActive = false
+                        wsClient.stop()
+                        serviceScope.launch {
+                            repository.log(LogLevel.INFO, "BotService", "Bybit Bot durduruldu")
+                        }
+                    }
+                    EXTRA_EXCHANGE_OKX -> {
+                        preferences.isOkxBotActive = false
+                        okxWsClient.stop()
+                        serviceScope.launch {
+                            repository.log(LogLevel.INFO, "BotService", "OKX Bot durduruldu")
+                        }
+                    }
+                    else -> {
+                        preferences.isBotActive = false
+                        preferences.isOkxBotActive = false
+                    }
+                }
+
+                if (!preferences.isBotActive && !preferences.isOkxBotActive) {
+                    stopBot()
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                    return START_NOT_STICKY
+                } else {
+                    updateNotification()
+                }
             }
             ACTION_START_BOT, null -> {
                 try {
@@ -125,66 +181,48 @@ class TradingBotService : Service() {
     }
 
     private fun startBot() {
-        if (isBotLoopRunning.getAndSet(true)) return
-
         serviceScope.launch {
-            val offset = repository.syncServerTime(preferences.isTestnet)
-            repository.log(LogLevel.INFO, "BotService", "7/24 Ticaret Botu başlatıldı (Zaman farkı: $offset ms)")
+            if (preferences.isBotActive) {
+                val offset = repository.syncServerTime(preferences.isTestnet)
+                repository.log(LogLevel.INFO, "BotService", "Bybit Bot veri akışı başlatılıyor (Zaman farkı: $offset ms)")
+                wsClient.connect(
+                    key = preferences.apiKey,
+                    secret = preferences.apiSecret,
+                    testnet = preferences.isTestnet,
+                    timeOffsetMs = offset,
+                    symbol = preferences.bybitSymbol
+                )
+            }
 
-            wsClient.connect(
-                key = preferences.apiKey,
-                secret = preferences.apiSecret,
-                testnet = preferences.isTestnet,
-                timeOffsetMs = offset,
-                symbol = preferences.bybitSymbol
-            )
+            if (preferences.isOkxBotActive) {
+                repository.log(LogLevel.INFO, "BotService", "OKX Bot veri akışı başlatılıyor (${preferences.okxSymbol})")
+                okxWsClient.connect(
+                    key = preferences.okxApiKey,
+                    secret = preferences.okxApiSecret,
+                    passphrase = preferences.okxApiPassphrase,
+                    testnet = preferences.isTestnet,
+                    symbol = preferences.okxSymbol
+                )
+            }
 
-            okxWsClient.start()
-
-            launch {
-                wsClient.priceUpdates.collect { price ->
-                    if (price > 0.0 && price != currentBasePrice) {
-                        currentBasePrice = price
+            if (isBotLoopRunning.compareAndSet(false, true)) {
+                launch {
+                    while (isActive && isBotLoopRunning.get()) {
+                        delay(30000)
+                        try {
+                            if (preferences.isBotActive) {
+                                repository.syncUnfilledOrdersWithExchange()
+                            }
+                            if (preferences.isOkxBotActive) {
+                                okxRepository.getPendingOrders()
+                            }
+                        } catch (e: Exception) {
+                            // ignore
+                        }
                     }
                 }
+                startWatchdogLoop()
             }
-
-            launch {
-                okxWsClient.priceUpdates.collect { price ->
-                    // Just keeping track of connection if needed
-                }
-            }
-
-            launch {
-                wsClient.orderUpdates.collect { order ->
-                    handleOrderUpdate(order)
-                }
-            }
-
-            launch {
-                okxWsClient.orderUpdates.collect { order ->
-                    handleOkxOrderUpdate(order)
-                }
-            }
-
-            launch {
-                while (isActive && isBotLoopRunning.get()) {
-                    delay(30000)
-                    try {
-                        if (preferences.isBotActive) {
-                            repository.syncUnfilledOrdersWithExchange()
-                        }
-                        if (preferences.isOkxBotActive) {
-                            // Okx polling fallback if WS misses
-                            okxRepository.getPendingOrders()
-                        }
-                    } catch (e: Exception) {
-                        // ignore
-                    }
-                }
-            }
-
-            startWatchdogLoop()
         }
     }
 
@@ -219,6 +257,23 @@ class TradingBotService : Service() {
 
                     // --- OKX RECONCILIATION ---
                     if (preferences.isOkxBotActive) {
+                        if (currentOkxBasePrice <= 0.0 || cycleCount % 3 == 0) {
+                            val okxTickerRes = okxRepository.getTicker()
+                            okxTickerRes.onSuccess { ticker ->
+                                val p = ticker.last.toDoubleOrNull() ?: 0.0
+                                if (p > 0.0) currentOkxBasePrice = p
+                            }
+                        }
+
+                        if (cycleCount % 3 == 0 || lastOkxUsdtBalance <= 0.0) {
+                            val okxBalRes = okxRepository.getWalletBalance()
+                            okxBalRes.onSuccess { balances ->
+                                lastOkxUsdtBalance = balances["USDT"]?.quantity ?: 0.0
+                                lastOkxBaseBalance = balances[preferences.okxBaseCoin]?.quantity ?: 0.0
+                                updateNotification()
+                            }
+                        }
+
                         if (cycleCount % 3 == 0) {
                             okxRepository.reconcileGridOrders(callerTag = "Watchdog-OKX")
                         }
@@ -236,7 +291,7 @@ class TradingBotService : Service() {
     }
 
     private suspend fun handleOkxOrderUpdate(order: com.example.data.remote.okx.model.OkxOrderDetails) {
-        if (preferences.isOkxBotActive && order.state == "filled") {
+        if (preferences.isOkxBotActive && order.state.equals("filled", ignoreCase = true)) {
             val fillPrice = order.avgPx.toDoubleOrNull() ?: order.px.toDoubleOrNull() ?: 0.0
             val fillQty = order.accFillSz.toDoubleOrNull() ?: order.sz.toDoubleOrNull() ?: 0.0
             val fillTime = order.uTime.toLongOrNull() ?: System.currentTimeMillis()
@@ -255,7 +310,7 @@ class TradingBotService : Service() {
             val notifId = ALERT_NOTIFICATION_ID_BASE + 500 + (order.ordId.hashCode() and 0x3FFFFFFF) % 500
             sendAlertNotification(
                 "OKX ${order.side.uppercase()} Limit Emri Gerçekleşti!",
-                "${order.side.uppercase()} $fillQty ${preferences.okxBaseCoin} @ $fillPrice USDT. Yeni OKX ızgara kuruldu.",
+                "${order.side.uppercase()} ${RebalanceEngine.format4(fillQty)} ${preferences.okxBaseCoin} @ $fillPrice USDT. Yeni OKX ızgara kuruldu.",
                 false,
                 notificationId = notifId
             )
@@ -263,7 +318,7 @@ class TradingBotService : Service() {
     }
 
     private suspend fun handleOrderUpdate(order: BybitOrderDto) {
-        if (order.orderStatus == "Filled") {
+        if (order.orderStatus.equals("Filled", ignoreCase = true)) {
             val orderId = order.orderId
             val avgPrice = order.avgPrice.toDoubleOrNull() ?: 0.0
             val fillPrice = if (avgPrice > 0.0) avgPrice else (order.priceValue)
@@ -283,7 +338,7 @@ class TradingBotService : Service() {
             val notifId = ALERT_NOTIFICATION_ID_BASE + (orderId.hashCode() and 0x7FFFFFFF) % 500
             sendAlertNotification(
                 "${order.side} Limit Emri Gerçekleşti!",
-                "${order.side} ${order.cumExecQty.toDoubleOrNull() ?: 0.0} ${preferences.bybitBaseCoin} @ ${order.avgPrice.toDoubleOrNull() ?: 0.0} USDT. Karşı emir iptal edildi ve yeni ızgara kuruldu.",
+                "${order.side} ${RebalanceEngine.format4(fillQty)} ${preferences.bybitBaseCoin} @ ${RebalanceEngine.format4(fillPrice)} USDT. Karşı emir iptal edildi ve yeni ızgara kuruldu.",
                 false,
                 notificationId = notifId
             )
@@ -291,12 +346,25 @@ class TradingBotService : Service() {
     }
 
     private fun updateNotification() {
-        val title = "Bybit 7/24 Rebalance Bot: AKTİF"
-        val baseVal = lastBaseBalance * currentBasePrice
-        val total = lastUsdtBalance + baseVal
-        val uPct = if (total > 0) (lastUsdtBalance / total * 100).toInt() else 50
-        val bPct = if (total > 0) (baseVal / total * 100).toInt() else 50
-        val content = "${preferences.bybitBaseCoin}: $${RebalanceEngine.format4(currentBasePrice)} | Portföy: %$uPct USDT / %$bPct ${preferences.bybitBaseCoin} ($${RebalanceEngine.format2(total)})"
+        val content = when {
+            preferences.isBotActive && preferences.isOkxBotActive -> {
+                "Bybit: $${RebalanceEngine.format4(currentBasePrice)} | OKX: $${RebalanceEngine.format4(currentOkxBasePrice)}"
+            }
+            preferences.isOkxBotActive -> {
+                val okxBaseVal = lastOkxBaseBalance * currentOkxBasePrice
+                val total = lastOkxUsdtBalance + okxBaseVal
+                val uPct = if (total > 0) (lastOkxUsdtBalance / total * 100).toInt() else 50
+                val bPct = if (total > 0) (okxBaseVal / total * 100).toInt() else 50
+                "${preferences.okxBaseCoin}: $${RebalanceEngine.format4(currentOkxBasePrice)} | Portföy: %$uPct USDT / %$bPct ${preferences.okxBaseCoin} ($${RebalanceEngine.format2(total)})"
+            }
+            else -> {
+                val baseVal = lastBaseBalance * currentBasePrice
+                val total = lastUsdtBalance + baseVal
+                val uPct = if (total > 0) (lastUsdtBalance / total * 100).toInt() else 50
+                val bPct = if (total > 0) (baseVal / total * 100).toInt() else 50
+                "${preferences.bybitBaseCoin}: $${RebalanceEngine.format4(currentBasePrice)} | Portföy: %$uPct USDT / %$bPct ${preferences.bybitBaseCoin} ($${RebalanceEngine.format2(total)})"
+            }
+        }
         
         val notification = buildForegroundNotification(content)
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -313,14 +381,21 @@ class TradingBotService : Service() {
         )
         val stopIntent = Intent(this, TradingBotService::class.java).apply {
             action = ACTION_STOP_BOT
+            putExtra(EXTRA_EXCHANGE, EXTRA_EXCHANGE_ALL)
         }
         val stopPendingIntent = PendingIntent.getService(
             this, 1, stopIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val title = when {
+            preferences.isBotActive && preferences.isOkxBotActive -> "BITBALANCE (Bybit + OKX): AKTİF"
+            preferences.isOkxBotActive -> "OKX 7/24 Dengeleme Botu: AKTİF"
+            else -> "Bybit 7/24 Dengeleme Botu: AKTİF"
+        }
+
         return NotificationCompat.Builder(this, CHANNEL_BOT_STATUS)
-            .setContentTitle("Bybit 7/24 Dengeleme Botu")
+            .setContentTitle(title)
             .setContentText(contentText)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentIntent(pendingIntent)
@@ -454,6 +529,11 @@ class TradingBotService : Service() {
     companion object {
         const val ACTION_START_BOT = "com.example.bybit.action.START_BOT"
         const val ACTION_STOP_BOT = "com.example.bybit.action.STOP_BOT"
+        const val EXTRA_EXCHANGE = "extra_exchange"
+        const val EXTRA_EXCHANGE_ALL = "all"
+        const val EXTRA_EXCHANGE_BYBIT = "bybit"
+        const val EXTRA_EXCHANGE_OKX = "okx"
+
         private const val NOTIFICATION_ID = 1001
         private const val ALERT_NOTIFICATION_ID_BASE = 2000
         private const val CHANNEL_BOT_STATUS = "bybit_bot_status_channel"
@@ -483,9 +563,10 @@ class TradingBotService : Service() {
             }
         }
 
-        fun stop(context: Context) {
+        fun stop(context: Context, exchange: String = EXTRA_EXCHANGE_ALL) {
             val intent = Intent(context, TradingBotService::class.java).apply {
                 action = ACTION_STOP_BOT
+                putExtra(EXTRA_EXCHANGE, exchange)
             }
             context.startService(intent)
         }

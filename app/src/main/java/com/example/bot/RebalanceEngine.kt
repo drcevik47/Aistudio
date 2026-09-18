@@ -192,15 +192,26 @@ object RebalanceEngine {
         // the theoretical infinitesimal rebalance size is:
         val targetUsdtTrade = (halfEquityAtBase * stepRatio) / 2.0
 
-        // Bybit Spot minimum order amount is 5.0 USDT
+        // Bybit/OKX Spot minimum order amount is ~5.0 USDT
         val minUsdtAmt = 5.0
+
+        val qtyDecimals = when {
+            basePrice >= 10000.0 -> 6
+            basePrice >= 1000.0 -> 5
+            basePrice >= 100.0 -> 4
+            basePrice >= 10.0 -> 3
+            basePrice >= 1.0 -> 2
+            else -> 1
+        }
+        val factor = Math.pow(10.0, qtyDecimals.toDouble())
+        val minBaseQty = 1.0 / factor
 
         // 1. SELL LIMIT ORDER (+stepPercent)
         // Sell targetUsdtTrade worth of BASE at sellPrice
         var sellBaseQty = targetUsdtTrade / sellPrice
-        sellBaseQty = kotlin.math.floor(sellBaseQty * 100.0) / 100.0
+        sellBaseQty = kotlin.math.floor(sellBaseQty * factor) / factor
         if (sellBaseQty > baseCoinBalance * 0.99) {
-            sellBaseQty = kotlin.math.floor(baseCoinBalance * 0.99 * 100.0) / 100.0
+            sellBaseQty = kotlin.math.floor(baseCoinBalance * 0.99 * factor) / factor
         }
         val sellUsdtValue = sellBaseQty * sellPrice
         val postSellUsdt = usdtBalance + sellUsdtValue
@@ -209,28 +220,28 @@ object RebalanceEngine {
         // 2. BUY LIMIT ORDER (-stepPercent)
         // Buy targetUsdtTrade worth of BASE at buyPrice
         var buyBaseQty = targetUsdtTrade / buyPrice
-        buyBaseQty = kotlin.math.floor(buyBaseQty * 100.0) / 100.0
+        buyBaseQty = kotlin.math.floor(buyBaseQty * factor) / factor
         var buyUsdtValue = buyBaseQty * buyPrice
         if (buyUsdtValue > usdtBalance * 0.99) {
             val maxUsdt = usdtBalance * 0.99
-            buyBaseQty = kotlin.math.floor((maxUsdt / buyPrice) * 100.0) / 100.0
+            buyBaseQty = kotlin.math.floor((maxUsdt / buyPrice) * factor) / factor
             buyUsdtValue = buyBaseQty * buyPrice
         }
         val postBuyUsdt = usdtBalance - buyUsdtValue
         val postBuyBaseValue = (baseCoinBalance + buyBaseQty) * buyPrice
 
-        val isSellValid = sellBaseQty >= 0.01 && sellUsdtValue >= minUsdtAmt && sellBaseQty <= baseCoinBalance
-        val isBuyValid = buyBaseQty >= 0.01 && buyUsdtValue >= minUsdtAmt && buyUsdtValue <= usdtBalance
+        val isSellValid = sellBaseQty >= minBaseQty && sellUsdtValue >= minUsdtAmt && sellBaseQty <= baseCoinBalance
+        val isBuyValid = buyBaseQty >= minBaseQty && buyUsdtValue >= minUsdtAmt && buyUsdtValue <= usdtBalance
 
         val isValid = isSellValid && isBuyValid
         val msg = when {
             sellBaseQty > baseCoinBalance || baseCoinBalance * sellPrice < minUsdtAmt ->
-                "Yetersiz BASE bakiyesi (Min: ${format2(minUsdtAmt)} USDT değerinde BASE gerekir, Eldeki: ${format4(baseCoinBalance)} BASE)"
+                "Yetersiz coin bakiyesi (Min: ${format2(minUsdtAmt)} USDT değerinde coin gerekir, Eldeki: ${format4(baseCoinBalance)})"
             buyUsdtValue > usdtBalance || usdtBalance < minUsdtAmt ->
                 "Yetersiz USDT bakiyesi (Min: ${format2(minUsdtAmt)} USDT gerekir, Eldeki: ${format2(usdtBalance)} USDT)"
             sellUsdtValue < minUsdtAmt || buyUsdtValue < minUsdtAmt ->
-                "Bybit minimum spot emir tutarı 5.0 USDT'dir. Hesaptaki bakiyeler (USDT ve BASE) en az 5.2 USDT olmalıdır."
-            else -> "Hazır: +%$stepPercent (${format4(sellPrice)}) -> ${format4(sellBaseQty)} BASE sat (~${format2(sellUsdtValue)} USDT) | -%$stepPercent (${format4(buyPrice)}) -> ${format4(buyBaseQty)} BASE al (~${format2(buyUsdtValue)} USDT)"
+                "Minimum spot emir tutarı 5.0 USDT'dir. Hesaptaki bakiyeler (USDT ve Coin) en az 5.2 USDT olmalıdır."
+            else -> "Hazır: +%$stepPercent (${format4(sellPrice)}) -> ${format4(sellBaseQty)} sat (~${format2(sellUsdtValue)} USDT) | -%$stepPercent (${format4(buyPrice)}) -> ${format4(buyBaseQty)} al (~${format2(buyUsdtValue)} USDT)"
         }
 
         return GridOrdersPlan(

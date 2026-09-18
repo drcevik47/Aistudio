@@ -146,6 +146,16 @@ class OkxRepository(
         }
     }
 
+    fun formatPrice(price: Double): String {
+        val decimals = when {
+            price >= 1000.0 -> 2
+            price >= 1.0 -> 4
+            price >= 0.01 -> 6
+            else -> 8
+        }
+        return String.format(java.util.Locale.US, "%.${decimals}f", price).trimEnd('0').trimEnd('.')
+    }
+
     suspend fun createOrder(
         side: String,
         orderType: String, // "market" or "limit"
@@ -162,7 +172,7 @@ class OkxRepository(
                     side = side.lowercase(),
                     ordType = orderType.lowercase(),
                     sz = String.format(java.util.Locale.US, "%.8f", qty).trimEnd('0').trimEnd('.'),
-                    px = price?.let { String.format(java.util.Locale.US, "%.4f", it).trimEnd('0').trimEnd('.') },
+                    px = price?.let { formatPrice(it) },
                     tgtCcy = "base_ccy", // Force quantity to mean base coin (e.g. BTC)
                     clOrdId = clOrdId
                 )
@@ -446,20 +456,76 @@ class OkxRepository(
     suspend fun syncTradesFromExchange(
         symbol: String? = null,
         daysBack: Int = 30,
-        startTimestamp: Long? = null
+        startTimestamp: Long? = null,
+        onProgress: ((currentWindow: Int, totalWindows: Int, fetchedCount: Int) -> Unit)? = null
     ): Result<TradeSyncResult> {
         return withContext(Dispatchers.IO) {
             try {
                 val api = createApiService()
                 val targetSymbol = symbol ?: preferences.okxSymbol
-                // We'll just fetch recent fills history as OKX provides it
-                val response = api.getFillsHistory(instId = targetSymbol, limit = 100)
+                val now = System.currentTimeMillis()
+                val effectiveStartTime = startTimestamp ?: (now - daysBack.toLong() * 24L * 3600L * 1000L)
+
+                val allFills = mutableListOf<OkxFill>()
                 
-                if (response.code != "0") {
-                    return@withContext Result.failure(Exception("${response.code} - ${response.msg}"))
+                // 1. Fetch recent fills (last 3 days, contains immediately filled trades)
+                try {
+                    val recentRes = api.getFills(
+                        instType = "SPOT",
+                        instId = targetSymbol,
+                        limit = 100,
+                        begin = effectiveStartTime
+                    )
+                    if (recentRes.code == "0" && recentRes.data.isNotEmpty()) {
+                        allFills.addAll(recentRes.data)
+                    }
+                } catch (e: Exception) {
+                    Log.w("OkxRepository", "getFills (recent) warning: ${e.message}")
                 }
-                
-                val remoteFills = response.data ?: emptyList()
+
+                var currentEnd: Long? = null
+                var page = 0
+                val maxPages = 20
+                var hasMore = true
+
+                while (hasMore && page < maxPages) {
+                    page++
+                    val response = api.getFillsHistory(
+                        instType = "SPOT",
+                        instId = targetSymbol,
+                        limit = 100,
+                        begin = effectiveStartTime,
+                        end = currentEnd
+                    )
+
+                    if (response.code != "0") {
+                        if (allFills.isEmpty()) {
+                            return@withContext Result.failure(Exception("${response.code} - ${response.msg}"))
+                        }
+                        break
+                    }
+
+                    val fills = response.data ?: emptyList()
+                    if (fills.isEmpty()) {
+                        hasMore = false
+                    } else {
+                        allFills.addAll(fills)
+                        onProgress?.invoke(page, maxPages, allFills.size)
+
+                        if (fills.size < 100) {
+                            hasMore = false
+                        } else {
+                            val oldestTs = fills.mapNotNull { it.ts.toLongOrNull() }.minOrNull()
+                            if (oldestTs != null && oldestTs > effectiveStartTime && (currentEnd == null || oldestTs < currentEnd)) {
+                                currentEnd = oldestTs
+                            } else {
+                                hasMore = false
+                            }
+                        }
+                    }
+                }
+
+                val remoteFills = allFills
                 val exchangeTradeDao = database.exchangeTradeDao()
                 val existingExecIds = exchangeTradeDao.getAllExecIds().toHashSet()
                 val existingInDbCount = existingExecIds.size
