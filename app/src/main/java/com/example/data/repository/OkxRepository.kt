@@ -169,16 +169,26 @@ class OkxRepository(
         null
     }
 
-    fun getPrecisionForSymbol(symbol: String = preferences.okxSymbol): Pair<Int, Int> {
+    fun getPrecisionForSymbol(symbol: String = preferences.okxSymbol): Pair<Int?, Int?> {
         val inst = okxInstrumentCache[symbol]
         val qtyDecimals = inst?.lotSz?.let { com.example.bot.RebalanceEngine.stepToDecimals(it) }
         val priceDecimals = inst?.tickSz?.let { com.example.bot.RebalanceEngine.stepToDecimals(it) }
-        return Pair(qtyDecimals ?: 2, priceDecimals ?: 4)
+        return Pair(qtyDecimals, priceDecimals)
     }
 
-    fun formatQty(qty: Double, symbol: String = preferences.okxSymbol): String {
+    fun formatQty(qty: Double, symbol: String = preferences.okxSymbol, price: Double? = null): String {
         val cachedPrecision = okxInstrumentCache[symbol]?.lotSz?.let { com.example.bot.RebalanceEngine.stepToDecimals(it) }
-        val decimals = cachedPrecision ?: 2
+        val decimals = cachedPrecision ?: run {
+            val refPrice = price ?: preferences.okxLastRebalancePrice
+            when {
+                refPrice >= 10000.0 -> 6
+                refPrice >= 1000.0 -> 5
+                refPrice >= 100.0 -> 4
+                refPrice >= 10.0 -> 3
+                refPrice >= 1.0 -> 2
+                else -> 1
+            }
+        }
         val factor = Math.pow(10.0, decimals.toDouble())
         val truncated = kotlin.math.floor(qty * factor) / factor
         return String.format(java.util.Locale.US, "%.${decimals}f", truncated)

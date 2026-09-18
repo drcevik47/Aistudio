@@ -175,6 +175,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             viewModelScope.launch(Dispatchers.IO) {
+                if (preferences.isConfigured) repository.getInstrumentInfo(preferences.bybitSymbol)
+                if (preferences.okxApiKey.isNotBlank()) okxRepository.getInstrumentInfo(preferences.okxSymbol)
                 repository.pruneLogs()
                 if (preferences.isConfigured) {
                     repository.syncUnfilledOrdersWithExchange()
@@ -210,6 +212,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             val tickerDeferred = async { if (preferences.isConfigured) repository.getTicker() else null }
+            val instrumentDeferred = async { if (preferences.isConfigured) repository.getInstrumentInfo(preferences.bybitSymbol) else null }
             val balanceDeferred = async {
                 if (preferences.isConfigured && (cycleCount % 2 == 0 || _uiState.value.usdtBalance <= 0.0)) repository.getWalletBalance() else null
             }
@@ -221,6 +224,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             // Ensure background maintenance tasks are awaited but don't block state computation
             syncDeferred.await()
             pruneDeferred.await()
+            instrumentDeferred.await()
 
             var currentPrice = _uiState.value.currentPrice
             var priceChange = _uiState.value.price24hChange
@@ -261,11 +265,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 currentPrice
             }
 
+            val (qtyPrec, pricePrec) = repository.getPrecisionForSymbol(preferences.bybitSymbol)
             val gridPlan = RebalanceEngine.calculateGridOrders(
                 usdtBalance = usdt,
                 baseCoinBalance = baseQty,
                 basePrice = anchorBasePrice,
-                stepPercent = _uiState.value.stepPercent
+                stepPercent = _uiState.value.stepPercent,
+                qtyPrecision = qtyPrec,
+                pricePrecision = pricePrec
             )
 
             okxDeferred.await()
@@ -412,6 +419,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (preferences.isOkxBotActive) okxRepository.reconcileGridOrders(callerTag = "ManuelYenile") else null
             }
             val tickerDeferred = async { if (preferences.isConfigured) repository.getTicker() else null }
+            val instrumentDeferred = async { if (preferences.isConfigured) repository.getInstrumentInfo(preferences.bybitSymbol) else null }
             val balanceDeferred = async { if (preferences.isConfigured) repository.getWalletBalance() else null }
             val ordersDeferred = async { if (preferences.isConfigured) repository.getOpenOrders() else null }
             val okxDeferred = async { fetchOkxData(0) }
@@ -465,11 +473,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 currentPrice
             }
 
+            instrumentDeferred.await()
+            val (qtyPrec, pricePrec) = repository.getPrecisionForSymbol(preferences.bybitSymbol)
             val gridPlan = RebalanceEngine.calculateGridOrders(
                 usdtBalance = usdt,
                 baseCoinBalance = baseQty,
                 basePrice = anchorBasePrice,
-                stepPercent = _uiState.value.stepPercent
+                stepPercent = _uiState.value.stepPercent,
+                qtyPrecision = qtyPrec,
+                pricePrecision = pricePrec
             )
 
             val shouldShowInitialDialog = !analysis.isBalanced5050 &&
@@ -516,6 +528,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val ordersDeferred = async {
             if (cycleCount % 2 == 0) okxRepository.getPendingOrders() else null
         }
+        val instrumentDeferred = async {
+            if (cycleCount % 10 == 0) okxRepository.getInstrumentInfo(preferences.okxSymbol) else null
+        }
 
         tickerDeferred.await()?.onSuccess { ticker ->
             okxCurrentPrice = ticker.last.toDoubleOrNull() ?: 0.0
@@ -539,18 +554,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         ordersDeferred.await()?.onSuccess { list ->
             okxOrders = list
         }
+        instrumentDeferred.await()
 
         val anchorOkxBasePrice = if (preferences.isOkxBotActive && preferences.okxLastRebalancePrice > 0.0) {
             preferences.okxLastRebalancePrice
         } else {
             okxCurrentPrice
         }
+        val (okxQtyPrec, okxPricePrec) = okxRepository.getPrecisionForSymbol(preferences.okxSymbol)
         val okxPlan = if (okxCurrentPrice > 0.0) {
             RebalanceEngine.calculateGridOrders(
                 usdtBalance = okxUsdt,
                 baseCoinBalance = okxBaseQty,
                 basePrice = anchorOkxBasePrice,
-                stepPercent = preferences.okxStepPercent
+                stepPercent = preferences.okxStepPercent,
+                qtyPrecision = okxQtyPrec,
+                pricePrecision = okxPricePrec
             )
         } else null
 
@@ -575,13 +594,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             state.currentPrice
         }
+        val (qtyPrec, pricePrec) = repository.getPrecisionForSymbol(preferences.bybitSymbol)
         val plan = RebalanceEngine.calculateGridOrders(
             usdtBalance = state.usdtBalance,
             baseCoinBalance = state.baseCoinBalance,
             basePrice = anchorBasePrice,
-            stepPercent = state.stepPercent
+            stepPercent = state.stepPercent,
+            qtyPrecision = qtyPrec,
+            pricePrecision = pricePrec
         )
-        _uiState.update { it.copy(gridPlan = plan) }
+
+        val anchorOkxBasePrice = if (preferences.isOkxBotActive && preferences.okxLastRebalancePrice > 0.0) {
+            preferences.okxLastRebalancePrice
+        } else {
+            state.okxCurrentPrice
+        }
+        val (okxQtyPrec, okxPricePrec) = okxRepository.getPrecisionForSymbol(preferences.okxSymbol)
+        val okxPlan = if (state.okxCurrentPrice > 0.0) {
+            RebalanceEngine.calculateGridOrders(
+                usdtBalance = state.okxUsdtBalance,
+                baseCoinBalance = state.okxBaseCoinBalance,
+                basePrice = anchorOkxBasePrice,
+                stepPercent = state.okxStepPercent,
+                qtyPrecision = okxQtyPrec,
+                pricePrecision = okxPricePrec
+            )
+        } else null
+
+        _uiState.update { it.copy(gridPlan = plan, okxGridPlan = okxPlan) }
     }
 
     fun requestInitialRebalanceDialog() {

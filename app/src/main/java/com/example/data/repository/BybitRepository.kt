@@ -175,11 +175,11 @@ class BybitRepository(
         null
     }
 
-    fun getPrecisionForSymbol(symbol: String = preferences.bybitSymbol): Pair<Int, Int> {
+    fun getPrecisionForSymbol(symbol: String = preferences.bybitSymbol): Pair<Int?, Int?> {
         val info = instrumentInfoCache[symbol]
         val qtyDecimals = info?.lotSizeFilter?.basePrecision?.let { com.example.bot.RebalanceEngine.stepToDecimals(it) }
         val priceDecimals = info?.priceFilter?.tickSize?.let { com.example.bot.RebalanceEngine.stepToDecimals(it) }
-        return Pair(qtyDecimals ?: 2, priceDecimals ?: 4)
+        return Pair(qtyDecimals, priceDecimals)
     }
 
     /**
@@ -1149,11 +1149,15 @@ class BybitRepository(
                     }
 
                     // 3. Calculate grid with the EXACT new base price
+                    getInstrumentInfo(preferences.bybitSymbol)
+                    val (qtyPrec, pricePrec) = getPrecisionForSymbol(preferences.bybitSymbol)
                     val plan = RebalanceEngine.calculateGridOrders(
                         usdtBalance = usdt,
                         baseCoinBalance = mnt,
                         basePrice = newPrice,
-                        stepPercent = preferences.stepPercent
+                        stepPercent = preferences.stepPercent,
+                        qtyPrecision = qtyPrec,
+                        pricePrecision = pricePrec
                     )
 
                     if (!plan.isValid) {
