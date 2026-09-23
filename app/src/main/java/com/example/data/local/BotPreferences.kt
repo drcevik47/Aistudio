@@ -164,8 +164,23 @@ class BotPreferences(context: Context) {
         set(value) = prefs.edit().putString("okx_active_sell_id", value).apply()
 
     var okxLastRebalancePrice: Double
-        get() = prefs.getFloat("okx_last_rebalance_price", 0.0f).toDouble()
-        set(value) = prefs.edit().putFloat("okx_last_rebalance_price", value.toFloat()).apply()
+        get() {
+            val str = prefs.getString("okx_last_rebalance_price_str", null)
+            if (str != null) {
+                return str.toDoubleOrNull() ?: 0.0
+            }
+            return try {
+                prefs.getFloat("okx_last_rebalance_price", 0.0f).toDouble()
+            } catch (e: Exception) {
+                0.0
+            }
+        }
+        set(value) {
+            prefs.edit()
+                .putString("okx_last_rebalance_price_str", value.toString())
+                .putFloat("okx_last_rebalance_price", value.toFloat())
+                .apply()
+        }
 
     var lastRebalancePrice: Double
         get() {

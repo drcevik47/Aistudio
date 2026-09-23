@@ -22,8 +22,11 @@ import com.example.data.remote.model.KlineResult
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -68,6 +71,18 @@ class BybitRepository(
         .add(KotlinJsonAdapterFactory())
         .build()
 
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    init {
+        scope.launch {
+            try {
+                exchangeTradeDao.clearSyntheticTrades()
+            } catch (e: Exception) {
+                // Non-fatal
+            }
+        }
+    }
+
     private val okHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
@@ -79,6 +94,9 @@ class BybitRepository(
             redactHeader("Authorization")
         })
         .build()
+
+    private val orderFillMutex = kotlinx.coroutines.sync.Mutex()
+    private val tradeSyncMutex = kotlinx.coroutines.sync.Mutex()
 
     // Clock offset between device time and Bybit server time
     private var serverTimeOffsetMs: Long = 0L
@@ -905,22 +923,36 @@ class BybitRepository(
                     recentOrders.firstOrNull { it.orderId == missingOrderId }
                 } else null
 
-                val isCancelledWithoutFill = exactTrackedOrder != null &&
-                    (exactTrackedOrder.orderStatus.equals("Cancelled", ignoreCase = true) ||
-                     exactTrackedOrder.orderStatus.equals("Deactivated", ignoreCase = true)) &&
-                    exactTrackedOrder.filledQtyValue == 0.0
+                // State Machine Check: If the missing order is STILL LIVE and only partially filled,
+                // do NOT reconcile and do NOT cancel the opposite order! Let it continue executing.
+                if (exactTrackedOrder != null && exactTrackedOrder.isPartiallyFilledAndLive) {
+                    log(
+                        LogLevel.INFO,
+                        callerTag,
+                        "Mutabakat bekletildi: $missingSide emri (${exactTrackedOrder.orderId}) borsada kısmi doldu (${exactTrackedOrder.cumExecQty}/${exactTrackedOrder.qty}) ancak halen açık/canlı. Tam dolum veya sonlanma bekleniyor."
+                    )
+                    return@withContext Result.success(
+                        ReconciliationResult(
+                            executedOrderFound = false,
+                            newBasePrice = preferences.lastRebalancePrice,
+                            message = "$missingSide emri kısmi doldu ve halen aktif, bekleniyor."
+                        )
+                    )
+                }
 
-                // Find the filled order details if genuinely filled.
+                val isCancelledWithoutFill = exactTrackedOrder != null && exactTrackedOrder.isCancelledWithoutFill
+
+                // Find the filled order details if genuinely filled or terminal partial fill (cancelled after partial fill).
                 // CRITICAL SAFETY SHIELD 1: Never match an order that is already marked as FILLED in Room DB!
                 // CRITICAL SAFETY SHIELD 2: Reject orders older than last grid placement time or older than 5 minutes.
                 val minAllowedCreatedTime = maxOf(lastGridOrderPlacedTimeMs - 10_000L, System.currentTimeMillis() - 300_000L)
-                val filledOrder = if (exactTrackedOrder != null && (exactTrackedOrder.isFilled || exactTrackedOrder.filledQtyValue > 0.0)) {
+                val filledOrder = if (exactTrackedOrder != null && exactTrackedOrder.isTerminalFilled) {
                     val isAlreadyProcessed = orderDao.getOrderByOrderId(exactTrackedOrder.orderId)?.status.equals("Filled", ignoreCase = true)
                     if (isAlreadyProcessed && triggeringFilledOrder == null) null else exactTrackedOrder
                 } else {
                     recentOrders.firstOrNull { order ->
                         order.side.equals(missingSide, ignoreCase = true) &&
-                        (order.isFilled || order.filledQtyValue > 0.0) &&
+                        order.isTerminalFilled &&
                         order.orderId != remainingOrder.orderId &&
                         (order.createdTime.toLongOrNull() ?: 0L) >= minAllowedCreatedTime &&
                         !orderDao.getOrderByOrderId(order.orderId)?.status.equals("Filled", ignoreCase = true)
@@ -954,10 +986,22 @@ class BybitRepository(
                         if (histRes.isSuccess) {
                             val histOrder = histRes.getOrNull()
                             if (histOrder != null) {
-                                if (histOrder.isFilled || histOrder.filledQtyValue > 0.0) {
+                                if (histOrder.isPartiallyFilledAndLive) {
+                                    log(
+                                        LogLevel.INFO,
+                                        callerTag,
+                                        "Mutabakat bekletildi: $missingSide geçmiş emri (${histOrder.orderId}) borsada kısmi doldu ancak açık/canlı. Bekleniyor."
+                                    )
+                                    return@withContext Result.success(
+                                        ReconciliationResult(
+                                            executedOrderFound = false,
+                                            newBasePrice = preferences.lastRebalancePrice,
+                                            message = "$missingSide emri kısmi doldu ve halen aktif, bekleniyor."
+                                        )
+                                    )
+                                } else if (histOrder.isTerminalFilled) {
                                     confirmedBybitOrder = histOrder
-                                } else if (histOrder.orderStatus.equals("Cancelled", ignoreCase = true) ||
-                                           histOrder.orderStatus.equals("Deactivated", ignoreCase = true)) {
+                                } else if (histOrder.isCancelledWithoutFill) {
                                     isExplicitlyCancelled = true
                                 }
                             }
@@ -1209,7 +1253,7 @@ class BybitRepository(
 
                 val minAllowedCreatedTime = maxOf(lastGridOrderPlacedTimeMs - 10_000L, System.currentTimeMillis() - 300_000L)
                 val latestFilled = if (isCancelledOnly) null else recentOrders.firstOrNull { order ->
-                    (order.isFilled || order.filledQtyValue > 0.0) &&
+                    order.isTerminalFilled &&
                     (order.createdTime.toLongOrNull() ?: 0L) >= minAllowedCreatedTime &&
                     !orderDao.getOrderByOrderId(order.orderId)?.status.equals("Filled", ignoreCase = true)
                 }
@@ -1878,70 +1922,60 @@ class BybitRepository(
             log(LogLevel.WARN, "BybitOrderFill", "Dolum kaydı reddedildi: Geçersiz fiyat ($price) veya miktar ($qty) ($orderId)")
             return@withContext
         }
-        try {
-            database.withTransaction {
+        orderFillMutex.withLock {
+            try {
                 val effectiveTime = if (fillTime > 0L) fillTime else System.currentTimeMillis()
-            val existing = orderDao.getOrderByOrderId(orderId)
-            if (existing != null) {
-                orderDao.updateOrderStatus(
-                    orderId = orderId,
-                    status = "Filled",
-                    filledQty = if (qty > 0.0) qty else existing.qty,
-                    avgPrice = if (price > 0.0) price else existing.price,
-                    fillTime = effectiveTime
-                )
-            } else {
-                orderDao.insertOrder(
-                    OrderEntity(
-                        orderId = orderId,
-                        side = side,
-                        orderType = "Limit",
-                        price = price,
-                        qty = qty,
-                        status = "Filled",
-                        filledQty = qty,
-                        avgPrice = price,
-                        timestamp = effectiveTime,
-                        triggerReason = triggerReason
-                    )
-                )
-            }
-
-            // Also keep exchange_trades in sync for instant analysis computation
-            // IDEMPOTENCY GUARD: Check if a trade for this orderId already exists in exchange_trades
-            val alreadyInTrades = if (orderId.isNotBlank()) exchangeTradeDao.hasTradeForOrder(orderId) else false
-            if (!alreadyInTrades) {
-                val execPrice = if (price > 0.0) price else existing?.price ?: preferences.lastRebalancePrice
-                val execQty = if (qty > 0.0) qty else existing?.qty ?: 0.0
-                if (execPrice > 0.0 && execQty > 0.0) {
-                    val execValue = execPrice * execQty
-                    val execFee = execValue * 0.001
-                    // Deterministic execId based on orderId to prevent duplicate insertions even with concurrent calls
-                    val execId = if (orderId.isNotBlank()) "fill_$orderId" else "fill_$effectiveTime"
-                    exchangeTradeDao.insertTrade(
-                        ExchangeTradeEntity(
-                            execId = execId,
-                            orderId = orderId,
-                            symbol = preferences.bybitSymbol,
-                            side = side,
-                            orderPrice = execPrice,
-                            orderQty = execQty,
-                            orderType = "Limit",
-                            execPrice = execPrice,
-                            execQty = execQty,
-                            execValue = execValue,
-                            execFee = execFee,
-                            timeMillis = effectiveTime,
-                            isMaker = true
+                var shouldTriggerSync = false
+                database.withTransaction {
+                    val existing = orderDao.getOrderByOrderId(orderId)
+                    if (existing != null) {
+                        if (existing.status != "Filled" || (qty > 0.0 && existing.filledQty < qty)) {
+                            orderDao.updateOrderStatus(
+                                orderId = orderId,
+                                status = "Filled",
+                                filledQty = if (qty > 0.0) qty else existing.qty,
+                                avgPrice = if (price > 0.0) price else existing.price,
+                                fillTime = effectiveTime
+                            )
+                            shouldTriggerSync = true
+                        }
+                    } else {
+                        orderDao.insertOrder(
+                            OrderEntity(
+                                exchange = "BYBIT",
+                                orderId = orderId,
+                                side = side,
+                                orderType = "Limit",
+                                price = price,
+                                qty = qty,
+                                status = "Filled",
+                                filledQty = qty,
+                                avgPrice = price,
+                                timestamp = effectiveTime,
+                                triggerReason = triggerReason
+                            )
                         )
-                    )
-                }
-            }
-            } // Close withTransaction
+                        shouldTriggerSync = true
+                    }
+                } // Close withTransaction
 
-            log(LogLevel.SUCCESS, "OrderHistory", "İşlem Room Veritabanına kaydedildi: $side $orderId @ $price")
-        } catch (e: Exception) {
-            log(LogLevel.WARN, "OrderHistory", "Veritabanı kayıt hatası: ${e.message}")
+                if (shouldTriggerSync) {
+                    log(LogLevel.SUCCESS, "OrderHistory", "İşlem Room Veritabanına kaydedildi: $side $orderId @ $price")
+                    // Trigger sync of genuine execution record from exchange in background to capture exact fee, maker/taker, execId
+                    scope.launch {
+                        try {
+                            syncTradesFromExchange(
+                                symbol = preferences.bybitSymbol,
+                                daysBack = 1
+                            )
+                        } catch (e: Exception) {
+                            // Non-blocking background sync
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                log(LogLevel.WARN, "OrderHistory", "Veritabanı kayıt hatası: ${e.message}")
+            }
         }
     }
 
@@ -2080,8 +2114,9 @@ class BybitRepository(
         isTestnet: Boolean = preferences.isTestnet,
         onProgress: ((currentWindow: Int, totalWindows: Int, fetchedCount: Int) -> Unit)? = null
     ): Result<TradeSyncResult> = withContext(Dispatchers.IO) {
-        try {
-            log(LogLevel.INFO, "TradeSync", "Borsadan işlemler çekilip veritabanı kontrol ediliyor...")
+        tradeSyncMutex.withLock {
+            try {
+                log(LogLevel.INFO, "TradeSync", "Borsadan işlemler çekilip veritabanı kontrol ediliyor...")
 
             // 1. Borsadan seçilen zaman aralığındaki tüm işlemleri çek
             val fetchResult = fetchTradeAnalysis(
@@ -2194,9 +2229,10 @@ class BybitRepository(
             )
 
             Result.success(syncResult)
-        } catch (e: Exception) {
-            log(LogLevel.ERROR, "TradeSync", "Senkronizasyon hatası: ${e.message}")
-            Result.failure(e)
+            } catch (e: Exception) {
+                log(LogLevel.ERROR, "TradeSync", "Senkronizasyon hatası: ${e.message}")
+                Result.failure(e)
+            }
         }
     }
 

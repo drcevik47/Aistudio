@@ -14,7 +14,12 @@ import com.example.data.remote.okx.OkxAuthInterceptor
 import com.example.data.remote.okx.model.*
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
@@ -27,9 +32,24 @@ class OkxRepository(
     private val preferences: BotPreferences,
     private val database: AppDatabase
 ) {
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    init {
+        scope.launch {
+            try {
+                database.exchangeTradeDao().clearSyntheticTrades()
+            } catch (e: Exception) {
+                // Non-fatal
+            }
+        }
+    }
+
     private val moshi = Moshi.Builder()
         .add(KotlinJsonAdapterFactory())
         .build()
+
+    private val orderFillMutex = kotlinx.coroutines.sync.Mutex()
+    private val tradeSyncMutex = kotlinx.coroutines.sync.Mutex()
 
     private fun createApiService(): OkxApiService {
         val apiKey = preferences.okxApiKey.trim()
@@ -362,15 +382,25 @@ class OkxRepository(
                     activeBuyId
                 }
 
+                // State Machine Check: If triggering order is still live with partial fill, wait
+                if (triggeringFilledOrder != null && triggeringFilledOrder.isPartiallyFilledAndLive) {
+                    log(
+                        LogLevel.INFO,
+                        callerTag,
+                        "OKX Mutabakat bekletildi: $missingSide emri (${triggeringFilledOrder.ordId}) kısmi doldu (${triggeringFilledOrder.accFillSz}/${triggeringFilledOrder.sz}) ancak borsa tahtasında halen canlı. Tam dolum veya sonlanma bekleniyor."
+                    )
+                    return@withContext Result.success(com.example.data.repository.ReconciliationResult(message = "OKX $missingSide emri kısmi doldu ve halen aktif, bekleniyor."))
+                }
+
                 // CRITICAL SAFETY SHIELD: Positive Proof of Fill Requirement
                 // An order missing from open orders CANNOT be assumed filled without explicit exchange proof.
                 var confirmedFilledOrder: com.example.data.remote.okx.model.OkxOrderDetails? = triggeringFilledOrder?.takeIf {
-                    it.state.equals("filled", ignoreCase = true) || ((it.accFillSz?.toDoubleOrNull() ?: 0.0) > 0.0)
+                    it.isTerminalFilled
                 }
-                var isExplicitlyCancelled = false
+                var isExplicitlyCancelled = triggeringFilledOrder?.isCancelledWithoutFill == true
 
                 // 1. If not directly confirmed via WebSocket event, query OKX order history
-                if (confirmedFilledOrder == null) {
+                if (confirmedFilledOrder == null && !isExplicitlyCancelled) {
                     try {
                         val api = createApiService()
                         val historyRes = api.getOrdersHistory(
@@ -386,11 +416,16 @@ class OkxRepository(
                                 historyRes.data.firstOrNull { it.side.equals(missingSide, ignoreCase = true) }
                             }
                             if (historyOrder != null) {
-                                if (historyOrder.state.equals("filled", ignoreCase = true) || 
-                                    ((historyOrder.accFillSz.toDoubleOrNull() ?: 0.0) > 0.0)) {
+                                if (historyOrder.isPartiallyFilledAndLive) {
+                                    log(
+                                        LogLevel.INFO,
+                                        callerTag,
+                                        "OKX Mutabakat bekletildi: $missingSide emri (${historyOrder.ordId}) geçmişte kısmi doldu ancak halen aktif. Bekleniyor."
+                                    )
+                                    return@withContext Result.success(com.example.data.repository.ReconciliationResult(message = "OKX $missingSide emri kısmi doldu ve halen aktif, bekleniyor."))
+                                } else if (historyOrder.isTerminalFilled) {
                                     confirmedFilledOrder = historyOrder
-                                } else if (historyOrder.state.equals("canceled", ignoreCase = true) ||
-                                           historyOrder.state.equals("order_failed", ignoreCase = true)) {
+                                } else if (historyOrder.isCancelledWithoutFill) {
                                     isExplicitlyCancelled = true
                                 }
                             }
@@ -528,7 +563,14 @@ class OkxRepository(
             val inst = getInstrumentInfo(preferences.okxSymbol)
             val (qtyPrec, pricePrec) = getPrecisionForSymbol(preferences.okxSymbol)
             val minSz = inst?.minSz?.toDoubleOrNull()
-            val minAmt = maxOf(2.0, (minSz ?: 0.0) * basePrice)
+            val maxLmtSz = inst?.maxLmtSz?.toDoubleOrNull()
+            val minNotionalVal = inst?.minNotional?.toDoubleOrNull()
+            // Dynamically calculate minAmt from instrument metadata
+            val minAmt = when {
+                minNotionalVal != null && minNotionalVal > 0.0 -> minNotionalVal
+                minSz != null && minSz > 0.0 && basePrice > 0.0 -> minSz * basePrice
+                else -> 1.0 // Minimal fallback
+            }
             val gridPlan = com.example.bot.RebalanceEngine.calculateGridOrders(
                 usdtBalance = usdtBalance,
                 baseCoinBalance = baseCoinBalance,
@@ -539,7 +581,8 @@ class OkxRepository(
                 tickSize = inst?.tickSz,
                 lotStep = inst?.lotSz,
                 minOrderAmt = minAmt,
-                minOrderQty = minSz
+                minOrderQty = minSz,
+                maxOrderQty = maxLmtSz
             )
 
             if (!gridPlan.isValid) {
@@ -689,69 +732,60 @@ class OkxRepository(
             log(LogLevel.WARN, "OkxOrderFill", "Dolum kaydı reddedildi: Geçersiz fiyat ($price) veya miktar ($qty) ($orderId)")
             return@withContext
         }
-        try {
-            database.withTransaction {
+        orderFillMutex.withLock {
+            try {
                 val effectiveTime = if (fillTime > 0L) fillTime else System.currentTimeMillis()
-                val orderDao = database.orderDao()
-                val exchangeTradeDao = database.exchangeTradeDao()
-                val existing = orderDao.getOrderByOrderId(orderId)
-                if (existing != null) {
-                    orderDao.updateOrderStatus(
-                        orderId = orderId,
-                        status = "Filled",
-                        filledQty = if (qty > 0.0) qty else existing.qty,
-                        avgPrice = if (price > 0.0) price else existing.price,
-                        fillTime = effectiveTime
-                    )
-                } else {
-                    orderDao.insertOrder(
-                        com.example.data.local.entity.OrderEntity(
-                            exchange = "OKX",
-                            orderId = orderId,
-                            side = side,
-                            orderType = "Limit",
-                            price = price,
-                            qty = qty,
-                            status = "Filled",
-                            filledQty = qty,
-                            avgPrice = price,
-                            timestamp = effectiveTime,
-                            triggerReason = triggerReason
-                        )
-                    )
-                }
-
-                val alreadyInTrades = if (orderId.isNotBlank()) exchangeTradeDao.hasTradeForOrder(orderId) else false
-                if (!alreadyInTrades) {
-                    val execPrice = if (price > 0.0) price else existing?.price ?: preferences.okxLastRebalancePrice
-                    val execQty = if (qty > 0.0) qty else existing?.qty ?: 0.0
-                    if (execPrice > 0.0 && execQty > 0.0) {
-                        val execValue = execPrice * execQty
-                        val execFee = execValue * 0.001
-                        val execId = if (orderId.isNotBlank()) "fill_$orderId" else "fill_$effectiveTime"
-                        exchangeTradeDao.insertTrade(
-                            com.example.data.local.entity.ExchangeTradeEntity(
-                                exchange = "OKX",
-                                execId = execId,
+                var shouldTriggerSync = false
+                database.withTransaction {
+                    val orderDao = database.orderDao()
+                    val existing = orderDao.getOrderByOrderId(orderId)
+                    if (existing != null) {
+                        if (existing.status != "Filled" || (qty > 0.0 && existing.filledQty < qty)) {
+                            orderDao.updateOrderStatus(
                                 orderId = orderId,
-                                symbol = preferences.okxSymbol,
+                                status = "Filled",
+                                filledQty = if (qty > 0.0) qty else existing.qty,
+                                avgPrice = if (price > 0.0) price else existing.price,
+                                fillTime = effectiveTime
+                            )
+                            shouldTriggerSync = true
+                        }
+                    } else {
+                        orderDao.insertOrder(
+                            com.example.data.local.entity.OrderEntity(
+                                exchange = "OKX",
+                                orderId = orderId,
                                 side = side,
-                                orderPrice = execPrice,
-                                orderQty = execQty,
                                 orderType = "Limit",
-                                execPrice = execPrice,
-                                execQty = execQty,
-                                execValue = execValue,
-                                execFee = execFee,
-                                timeMillis = effectiveTime,
-                                isMaker = true
+                                price = price,
+                                qty = qty,
+                                status = "Filled",
+                                filledQty = qty,
+                                avgPrice = price,
+                                timestamp = effectiveTime,
+                                triggerReason = triggerReason
                             )
                         )
+                        shouldTriggerSync = true
+                    }
+                } // Close withTransaction
+
+                if (shouldTriggerSync) {
+                    // Trigger sync of genuine execution record from OKX in background to capture exact fee, maker/taker, execId
+                    scope.launch {
+                        try {
+                            syncTradesFromExchange(
+                                symbol = preferences.okxSymbol,
+                                daysBack = 1
+                            )
+                        } catch (e: Exception) {
+                            // Non-blocking background sync
+                        }
                     }
                 }
+            } catch (e: Exception) {
+                Log.e("OkxRepository", "recordOrderFilled error: ${e.message}")
             }
-        } catch (e: Exception) {
-            Log.e("OkxRepository", "recordOrderFilled error: ${e.message}")
         }
     }
     suspend fun syncTradesFromExchange(
@@ -761,7 +795,8 @@ class OkxRepository(
         onProgress: ((currentWindow: Int, totalWindows: Int, fetchedCount: Int) -> Unit)? = null
     ): Result<TradeSyncResult> {
         return withContext(Dispatchers.IO) {
-            try {
+            tradeSyncMutex.withLock {
+                try {
                 val api = createApiService()
                 val targetSymbol = symbol ?: preferences.okxSymbol
                 val now = System.currentTimeMillis()
@@ -924,8 +959,9 @@ class OkxRepository(
                     analysis = okxAnalysis
                 )
                 Result.success(syncResult)
-            } catch (e: Exception) {
-                Result.failure(e)
+                } catch (e: Exception) {
+                    Result.failure(e)
+                }
             }
         }
     }

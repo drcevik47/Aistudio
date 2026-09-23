@@ -78,7 +78,19 @@ data class OkxOrderDetails(
     @Json(name = "uTime") val uTime: String = "",
     @Json(name = "fee") val fee: String = "",
     @Json(name = "feeCcy") val feeCcy: String = ""
-)
+) {
+    val filledQtyValue: Double get() = accFillSz.toDoubleOrNull() ?: 0.0
+    val isFilled: Boolean get() = state.equals("filled", ignoreCase = true)
+    val isCancelled: Boolean get() = state.equals("canceled", ignoreCase = true) || state.equals("order_failed", ignoreCase = true)
+    val isPartiallyFilled: Boolean get() = state.equals("partially_filled", ignoreCase = true)
+    val isLive: Boolean get() = state.equals("live", ignoreCase = true) || state.equals("partially_filled", ignoreCase = true)
+
+    // State machine helpers:
+    val isPartiallyFilledAndLive: Boolean get() = isPartiallyFilled && !isCancelled && !isFilled
+    val isPartiallyFilledAndCancelled: Boolean get() = isCancelled && filledQtyValue > 0.0
+    val isCancelledWithoutFill: Boolean get() = isCancelled && filledQtyValue == 0.0
+    val isTerminalFilled: Boolean get() = isFilled || isPartiallyFilledAndCancelled
+}
 
 @JsonClass(generateAdapter = true)
 data class OkxFill(
@@ -109,5 +121,8 @@ data class OkxInstrument(
     @Json(name = "quoteCcy") val quoteCcy: String = "",
     @Json(name = "lotSz") val lotSz: String = "0.01",
     @Json(name = "minSz") val minSz: String = "0.01",
-    @Json(name = "tickSz") val tickSz: String = "0.0001"
+    @Json(name = "tickSz") val tickSz: String = "0.0001",
+    @Json(name = "maxLmtSz") val maxLmtSz: String? = null,
+    @Json(name = "maxMktSz") val maxMktSz: String? = null,
+    @Json(name = "minNotional") val minNotional: String? = null
 )

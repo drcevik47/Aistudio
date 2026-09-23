@@ -15,7 +15,7 @@ import com.example.data.local.entity.OrderEntity
 
 @Database(
     entities = [OrderEntity::class, LogEntity::class, ExchangeTradeEntity::class],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -88,6 +88,27 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Remove duplicates if any exist before adding unique index
+                try {
+                    db.execSQL(
+                        """
+                        DELETE FROM orders WHERE id NOT IN (
+                            SELECT MIN(id) FROM orders GROUP BY exchange, orderId
+                        )
+                        """.trimIndent()
+                    )
+                } catch (e: Exception) {
+                    // Ignore if empty or table variance
+                }
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_orders_exchange_orderId` ON `orders` (`exchange`, `orderId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_orders_symbol` ON `orders` (`symbol`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_orders_status` ON `orders` (`status`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_orders_timestamp` ON `orders` (`timestamp`)")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -95,7 +116,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "bybit_bot_database"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     .build()
                 INSTANCE = instance
                 instance

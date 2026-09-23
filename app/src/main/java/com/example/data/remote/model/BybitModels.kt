@@ -265,7 +265,17 @@ data class BybitOrderDto(
     val avgPriceValue: Double get() = avgPrice.toDoubleOrNull() ?: priceValue
     val isFilled: Boolean get() = orderStatus.equals("Filled", ignoreCase = true)
     val isCancelled: Boolean get() = orderStatus.equals("Cancelled", ignoreCase = true) || orderStatus.equals("Deactivated", ignoreCase = true)
+    val isPartiallyFilled: Boolean get() = orderStatus.equals("PartiallyFilled", ignoreCase = true)
     val isActive: Boolean get() = orderStatus.equals("New", ignoreCase = true) || orderStatus.equals("PartiallyFilled", ignoreCase = true)
+    // Precise state machine checks:
+    // 1. Partially filled AND still open in orderbook
+    val isPartiallyFilledAndLive: Boolean get() = isPartiallyFilled && isActive && !isCancelled && !isFilled
+    // 2. Partially filled BUT was cancelled/deactivated (terminal state with partial execution)
+    val isPartiallyFilledAndCancelled: Boolean get() = isCancelled && filledQtyValue > 0.0
+    // 3. Completely cancelled with 0 executions
+    val isCancelledWithoutFill: Boolean get() = isCancelled && filledQtyValue == 0.0
+    // 4. Fully executed or partially executed with order closed/cancelled (safe for reconciliation)
+    val isTerminalFilled: Boolean get() = isFilled || isPartiallyFilledAndCancelled
     val createdTimeMillis: Long get() = createdTime.toLongOrNull() ?: 0L
     val updatedTimeMillis: Long get() = updatedTime.toLongOrNull() ?: 0L
 }

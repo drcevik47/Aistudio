@@ -60,4 +60,7 @@ interface ExchangeTradeDao {
 
     @Query("DELETE FROM exchange_trades WHERE symbol = :symbol")
     suspend fun clearTradesBySymbol(symbol: String)
+
+    @Query("DELETE FROM exchange_trades WHERE execId LIKE 'fill_%' OR execId LIKE 'okx_fill_%'")
+    suspend fun clearSyntheticTrades()
 }

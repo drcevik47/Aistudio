@@ -261,12 +261,18 @@ object RebalanceEngine {
         val sellPrice = sellPriceBd.toDouble()
         val buyPrice = buyPriceBd.toDouble()
 
-        // Calculate total equity evaluated at the base price
-        val totalEquityAtBase = usdtBalance + (baseCoinBalance * basePrice)
-        val halfEquityAtBase = totalEquityAtBase / 2.0
+        val basePriceBd = BigDecimal.valueOf(basePrice)
+        val usdtBalanceBd = BigDecimal.valueOf(usdtBalance)
+        val baseCoinBalanceBd = BigDecimal.valueOf(baseCoinBalance)
+        val minOrderAmtBd = BigDecimal.valueOf(minOrderAmt)
+
+        // Calculate total equity evaluated at the base price using BigDecimal
+        val totalEquityAtBaseBd = usdtBalanceBd.add(baseCoinBalanceBd.multiply(basePriceBd))
+        val halfEquityAtBaseBd = totalEquityAtBaseBd.divide(BigDecimal.valueOf(2.0), 12, RoundingMode.HALF_UP)
 
         // In a 50/50 grid, target rebalance amount at the trigger step
-        val targetUsdtTrade = (halfEquityAtBase * stepRatio) / 2.0
+        val stepRatioBd = BigDecimal.valueOf(stepRatio)
+        val targetUsdtTradeBd = (halfEquityAtBaseBd.multiply(stepRatioBd)).divide(BigDecimal.valueOf(2.0), 12, RoundingMode.HALF_UP)
 
         val qtyDecimals = qtyPrecision ?: when {
             basePrice >= 10000.0 -> 6
@@ -277,23 +283,23 @@ object RebalanceEngine {
             else -> 1
         }
         val stepBd = lotStep?.takeIf { it.isNotBlank() }?.let { runCatching { BigDecimal(it).stripTrailingZeros() }.getOrNull() }
-        val factor = Math.pow(10.0, qtyDecimals.toDouble())
-        val defaultMinBaseQty = stepBd?.toDouble() ?: (1.0 / factor)
-        val effectiveMinBaseQty = maxOf(minOrderQty ?: 0.0, defaultMinBaseQty)
+        val defaultMinBaseQtyBd = stepBd ?: BigDecimal.ONE.divide(BigDecimal.TEN.pow(qtyDecimals), qtyDecimals, RoundingMode.HALF_UP)
+        val minOrderQtyBd = minOrderQty?.let { BigDecimal.valueOf(it) } ?: BigDecimal.ZERO
+        val effectiveMinBaseQtyBd = if (minOrderQtyBd > defaultMinBaseQtyBd) minOrderQtyBd else defaultMinBaseQtyBd
 
         // 1. SELL LIMIT ORDER (+stepPercent)
         var sellBaseQtyBd = if (stepBd != null && stepBd > BigDecimal.ZERO) {
-            val raw = BigDecimal.valueOf(targetUsdtTrade).divide(sellPriceBd, 12, RoundingMode.DOWN)
+            val raw = targetUsdtTradeBd.divide(sellPriceBd, 12, RoundingMode.DOWN)
             raw.divide(stepBd, 0, RoundingMode.FLOOR).multiply(stepBd)
         } else {
-            BigDecimal.valueOf(kotlin.math.floor((targetUsdtTrade / sellPrice) * factor) / factor)
+            targetUsdtTradeBd.divide(sellPriceBd, qtyDecimals, RoundingMode.FLOOR)
         }
 
-        val maxSellAllowed = baseCoinBalance * 0.999
+        val maxSellAllowedBd = baseCoinBalanceBd.multiply(BigDecimal.valueOf(0.999))
         val maxSellBd = if (stepBd != null && stepBd > BigDecimal.ZERO) {
-            BigDecimal.valueOf(maxSellAllowed).divide(stepBd, 0, RoundingMode.FLOOR).multiply(stepBd)
+            maxSellAllowedBd.divide(stepBd, 0, RoundingMode.FLOOR).multiply(stepBd)
         } else {
-            BigDecimal.valueOf(kotlin.math.floor(maxSellAllowed * factor) / factor)
+            maxSellAllowedBd.setScale(qtyDecimals, RoundingMode.FLOOR)
         }
         if (sellBaseQtyBd > maxSellBd) {
             sellBaseQtyBd = maxSellBd
@@ -306,57 +312,71 @@ object RebalanceEngine {
             }
         }
 
-        val sellBaseQty = sellBaseQtyBd.toDouble()
-        val sellUsdtValue = sellBaseQty * sellPrice
-        val postSellUsdt = usdtBalance + sellUsdtValue
-        val postSellBaseValue = (baseCoinBalance - sellBaseQty) * sellPrice
+        val sellUsdtValueBd = sellBaseQtyBd.multiply(sellPriceBd)
+        val postSellUsdtBd = usdtBalanceBd.add(sellUsdtValueBd)
+        val postSellBaseValueBd = (baseCoinBalanceBd.subtract(sellBaseQtyBd)).multiply(sellPriceBd)
 
         // 2. BUY LIMIT ORDER (-stepPercent)
         var buyBaseQtyBd = if (stepBd != null && stepBd > BigDecimal.ZERO) {
-            val raw = BigDecimal.valueOf(targetUsdtTrade).divide(buyPriceBd, 12, RoundingMode.DOWN)
+            val raw = targetUsdtTradeBd.divide(buyPriceBd, 12, RoundingMode.DOWN)
             raw.divide(stepBd, 0, RoundingMode.FLOOR).multiply(stepBd)
         } else {
-            BigDecimal.valueOf(kotlin.math.floor((targetUsdtTrade / buyPrice) * factor) / factor)
+            targetUsdtTradeBd.divide(buyPriceBd, qtyDecimals, RoundingMode.FLOOR)
         }
 
-        val maxUsdt = usdtBalance * 0.999
-        var buyUsdtValue = (buyBaseQtyBd.multiply(buyPriceBd)).toDouble()
-        if (buyUsdtValue > maxUsdt) {
+        val maxUsdtBd = usdtBalanceBd.multiply(BigDecimal.valueOf(0.999))
+        var buyUsdtValueBd = buyBaseQtyBd.multiply(buyPriceBd)
+        if (buyUsdtValueBd > maxUsdtBd) {
             buyBaseQtyBd = if (stepBd != null && stepBd > BigDecimal.ZERO) {
-                val raw = BigDecimal.valueOf(maxUsdt).divide(buyPriceBd, 12, RoundingMode.DOWN)
+                val raw = maxUsdtBd.divide(buyPriceBd, 12, RoundingMode.DOWN)
                 raw.divide(stepBd, 0, RoundingMode.FLOOR).multiply(stepBd)
             } else {
-                BigDecimal.valueOf(kotlin.math.floor((maxUsdt / buyPrice) * factor) / factor)
+                maxUsdtBd.divide(buyPriceBd, qtyDecimals, RoundingMode.FLOOR)
             }
-            buyUsdtValue = (buyBaseQtyBd.multiply(buyPriceBd)).toDouble()
+            buyUsdtValueBd = buyBaseQtyBd.multiply(buyPriceBd)
         }
 
         if (maxOrderQty != null && maxOrderQty > 0.0) {
             val maxOrderBd = BigDecimal.valueOf(maxOrderQty)
             if (buyBaseQtyBd > maxOrderBd) {
                 buyBaseQtyBd = maxOrderBd
-                buyUsdtValue = (buyBaseQtyBd.multiply(buyPriceBd)).toDouble()
+                buyUsdtValueBd = buyBaseQtyBd.multiply(buyPriceBd)
             }
         }
 
-        val buyBaseQty = buyBaseQtyBd.toDouble()
-        val postBuyUsdt = usdtBalance - buyUsdtValue
-        val postBuyBaseValue = (baseCoinBalance + buyBaseQty) * buyPrice
+        val postBuyUsdtBd = usdtBalanceBd.subtract(buyUsdtValueBd)
+        val postBuyBaseValueBd = (baseCoinBalanceBd.add(buyBaseQtyBd)).multiply(buyPriceBd)
 
-        val isSellValid = sellBaseQty >= effectiveMinBaseQty && sellUsdtValue >= minOrderAmt && sellBaseQty <= baseCoinBalance
-        val isBuyValid = buyBaseQty >= effectiveMinBaseQty && buyUsdtValue >= minOrderAmt && buyUsdtValue <= usdtBalance
+        val isSellValid = sellBaseQtyBd >= effectiveMinBaseQtyBd &&
+                sellUsdtValueBd >= minOrderAmtBd &&
+                sellBaseQtyBd <= baseCoinBalanceBd
+
+        val isBuyValid = buyBaseQtyBd >= effectiveMinBaseQtyBd &&
+                buyUsdtValueBd >= minOrderAmtBd &&
+                buyUsdtValueBd <= usdtBalanceBd
+
+        val sellBaseQty = sellBaseQtyBd.toDouble()
+        val sellUsdtValue = sellUsdtValueBd.toDouble()
+        val postSellUsdt = postSellUsdtBd.toDouble()
+        val postSellBaseValue = postSellBaseValueBd.toDouble()
+
+        val buyBaseQty = buyBaseQtyBd.toDouble()
+        val buyUsdtValue = buyUsdtValueBd.toDouble()
+        val postBuyUsdt = postBuyUsdtBd.toDouble()
+        val postBuyBaseValue = postBuyBaseValueBd.toDouble()
+        val effectiveMinBaseQty = effectiveMinBaseQtyBd.toDouble()
 
         val isValid = isSellValid && isBuyValid
         val msg = when {
-            sellBaseQty < effectiveMinBaseQty ->
+            sellBaseQtyBd < effectiveMinBaseQtyBd ->
                 "Satış miktarı yetersiz (${formatCryptoQty(sellBaseQty)} < Min: ${formatCryptoQty(effectiveMinBaseQty)})"
-            buyBaseQty < effectiveMinBaseQty ->
+            buyBaseQtyBd < effectiveMinBaseQtyBd ->
                 "Alış miktarı yetersiz (${formatCryptoQty(buyBaseQty)} < Min: ${formatCryptoQty(effectiveMinBaseQty)})"
-            sellBaseQty > baseCoinBalance || baseCoinBalance * sellPrice < minOrderAmt ->
+            sellBaseQtyBd > baseCoinBalanceBd || baseCoinBalanceBd.multiply(sellPriceBd) < minOrderAmtBd ->
                 "Yetersiz coin bakiyesi (Min: ${minOrderAmt} USDT değerinde coin gerekir, Eldeki: ${formatCryptoQty(baseCoinBalance)})"
-            buyUsdtValue > usdtBalance || usdtBalance < minOrderAmt ->
+            buyUsdtValueBd > usdtBalanceBd || usdtBalanceBd < minOrderAmtBd ->
                 "Yetersiz USDT bakiyesi (Min: ${minOrderAmt} USDT gerekir, Eldeki: ${format2(usdtBalance)} USDT)"
-            sellUsdtValue < minOrderAmt || buyUsdtValue < minOrderAmt ->
+            sellUsdtValueBd < minOrderAmtBd || buyUsdtValueBd < minOrderAmtBd ->
                 "Minimum spot emir tutarı ${minOrderAmt} USDT'dir (Satış: ${format2(sellUsdtValue)}, Alış: ${format2(buyUsdtValue)} USDT)."
             else -> "Hazır: +%$stepPercent (${format4(sellPrice)}) -> ${formatCryptoQty(sellBaseQty)} sat (~${format2(sellUsdtValue)} USDT) | -%$stepPercent (${format4(buyPrice)}) -> ${formatCryptoQty(buyBaseQty)} al (~${format2(buyUsdtValue)} USDT)"
         }
