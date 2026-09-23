@@ -251,7 +251,8 @@ class OkxRepository(
     private val reconcileMutex = kotlinx.coroutines.sync.Mutex()
 
     suspend fun reconcileGridOrders(
-        callerTag: String = "OkxReconcile"
+        callerTag: String = "OkxReconcile",
+        triggeringFilledOrder: com.example.data.remote.okx.model.OkxOrderDetails? = null
     ): Result<com.example.data.repository.ReconciliationResult> = withContext(Dispatchers.IO) {
         if (!preferences.isConfigured || !preferences.isOkxBotActive) {
             return@withContext Result.success(com.example.data.repository.ReconciliationResult(message = "OKX Bot aktif değil"))
@@ -293,9 +294,18 @@ class OkxRepository(
             val currentPrice = tickerRes.getOrNull()?.last?.toDoubleOrNull() ?: 0.0
 
             if ((openBuyOrder != null && openSellOrder == null) || (openBuyOrder == null && openSellOrder != null)) {
-                val missingSide = if (openBuyOrder == null) "Buy" else "Sell"
+                val missingSide = if (triggeringFilledOrder != null) {
+                    triggeringFilledOrder.side.replaceFirstChar { it.uppercase() }
+                } else if (openBuyOrder == null) "Buy" else "Sell"
+
                 val remainingOrder = openBuyOrder ?: openSellOrder!!
-                val missingOrderId = if (missingSide.equals("Sell", ignoreCase = true)) activeSellId else activeBuyId
+                val missingOrderId = if (triggeringFilledOrder != null && triggeringFilledOrder.ordId.isNotBlank()) {
+                    triggeringFilledOrder.ordId
+                } else if (missingSide.equals("Sell", ignoreCase = true)) {
+                    activeSellId
+                } else {
+                    activeBuyId
+                }
 
                 val lastBase = preferences.okxLastRebalancePrice
                 val step = preferences.okxStepPercent
@@ -306,13 +316,30 @@ class OkxRepository(
                     if (lastBase > 0.0) lastBase * (1.0 - step / 100.0) else 0.0
                 }
 
-                val finalExecPrice = if (expectedGridPrice > 0.0) expectedGridPrice else currentPrice
+                val directPrice = triggeringFilledOrder?.avgPx?.toDoubleOrNull()?.takeIf { it > 0.0 }
+                    ?: triggeringFilledOrder?.px?.toDoubleOrNull()?.takeIf { it > 0.0 }
+
+                val rawPrice = directPrice ?: (if (expectedGridPrice > 0.0) expectedGridPrice else currentPrice)
+                val isPriceWithinGridBounds = if (expectedGridPrice > 0.0 && rawPrice > 0.0) {
+                    val maxAllowedDeviation = (step / 100.0) * 2.0
+                    val deviation = Math.abs(rawPrice - expectedGridPrice) / expectedGridPrice
+                    deviation <= maxAllowedDeviation
+                } else true
+
+                val finalExecPrice = if (isPriceWithinGridBounds && rawPrice > 0.0) {
+                    rawPrice
+                } else {
+                    log(LogLevel.WARN, callerTag, "OKX Fiyat sapması engellendi (Tespit: $rawPrice, Beklenen: $expectedGridPrice). Güvenli ızgara fiyatı kullanılıyor.")
+                    if (expectedGridPrice > 0.0) expectedGridPrice else lastBase
+                }
                 val execOrderId = missingOrderId.ifBlank { "okx_exec_${System.currentTimeMillis()}" }
 
                 // Retrieve expected quantity: check DB for tracked order or use opposite symmetric grid order size
                 val trackedOrderInDb = if (missingOrderId.isNotBlank()) database.orderDao().getOrderByOrderId(missingOrderId) else null
                 val remainingQty = remainingOrder.sz.toDoubleOrNull() ?: 0.0
-                val estimatedQty = trackedOrderInDb?.qty?.takeIf { it > 0.0 } ?: remainingQty
+                val directQty = triggeringFilledOrder?.accFillSz?.toDoubleOrNull()?.takeIf { it > 0.0 }
+                    ?: triggeringFilledOrder?.sz?.toDoubleOrNull()?.takeIf { it > 0.0 }
+                val estimatedQty = directQty ?: (trackedOrderInDb?.qty?.takeIf { it > 0.0 } ?: remainingQty)
 
                 log(LogLevel.SUCCESS, callerTag, "OKX Mutabakat: $missingSide emri GERÇEKLEŞMİŞ! Fiyat: $finalExecPrice, Miktar: $estimatedQty ($execOrderId)")
 

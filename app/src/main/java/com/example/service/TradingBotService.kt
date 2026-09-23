@@ -309,7 +309,7 @@ class TradingBotService : Service() {
                 fillTime = fillTime
             )
             
-            okxRepository.reconcileGridOrders(callerTag = "OkxWebSocket")
+            okxRepository.reconcileGridOrders(callerTag = "OkxWebSocket", triggeringFilledOrder = order)
             
             val notifId = ALERT_NOTIFICATION_ID_BASE + 500 + (order.ordId.hashCode() and 0x3FFFFFFF) % 500
             sendAlertNotification(
@@ -337,7 +337,7 @@ class TradingBotService : Service() {
                 triggerReason = if (order.side.equals("Buy", ignoreCase = true)) "GridStepDownBuy" else "GridStepUpSell",
                 fillTime = order.updatedTime.toLongOrNull() ?: 0L
             )
-            repository.reconcileGridOrders(callerTag = "WebSocket")
+            repository.reconcileGridOrders(callerTag = "WebSocket", triggeringFilledOrder = order)
 
             val notifId = ALERT_NOTIFICATION_ID_BASE + (orderId.hashCode() and 0x7FFFFFFF) % 500
             sendAlertNotification(

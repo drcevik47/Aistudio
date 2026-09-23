@@ -680,7 +680,8 @@ class BybitRepository(
      * and places new symmetric grid orders.
      */
     suspend fun reconcileGridOrders(
-        callerTag: String = "Reconcile"
+        callerTag: String = "Reconcile",
+        triggeringFilledOrder: BybitOrderDto? = null
     ): Result<ReconciliationResult> = withContext(Dispatchers.IO) {
         if (!preferences.isConfigured || !preferences.isBotActive) {
             return@withContext Result.success(ReconciliationResult(message = "Bot aktif değil"))
@@ -747,10 +748,18 @@ class BybitRepository(
             if ((openBuyOrder != null && openSellOrder == null) || (openBuyOrder == null && openSellOrder != null)) {
                 val missingSide = if (openBuyOrder == null) "Buy" else "Sell"
                 val remainingOrder = openBuyOrder ?: openSellOrder!!
-                val missingOrderId = if (missingSide.equals("Sell", ignoreCase = true)) activeSellId else activeBuyId
+                val missingOrderId = if (triggeringFilledOrder != null && triggeringFilledOrder.orderId.isNotBlank()) {
+                    triggeringFilledOrder.orderId
+                } else if (missingSide.equals("Sell", ignoreCase = true)) {
+                    activeSellId
+                } else {
+                    activeBuyId
+                }
 
-                // Prioritize matching the exact tracked missingOrderId first
-                val exactTrackedOrder = if (missingOrderId.isNotBlank()) {
+                // Prioritize matching the exact tracked missingOrderId first or use direct triggering event
+                val exactTrackedOrder = if (triggeringFilledOrder != null) {
+                    triggeringFilledOrder
+                } else if (missingOrderId.isNotBlank()) {
                     recentOrders.firstOrNull { it.orderId == missingOrderId }
                 } else null
 
@@ -760,28 +769,32 @@ class BybitRepository(
                     exactTrackedOrder.filledQtyValue == 0.0
 
                 // Find the filled order details if genuinely filled.
-                // 1) Match exact missingOrderId if available
-                // 2) Or match an order of missingSide created within the last 2 hours to avoid ancient orders
-                val twoHoursAgo = System.currentTimeMillis() - 7_200_000L
+                // CRITICAL SAFETY SHIELD 1: Never match an order that is already marked as FILLED in Room DB!
+                // CRITICAL SAFETY SHIELD 2: Reject orders older than last grid placement time or older than 5 minutes.
+                val minAllowedCreatedTime = maxOf(lastGridOrderPlacedTimeMs - 10_000L, System.currentTimeMillis() - 300_000L)
                 val filledOrder = if (exactTrackedOrder != null && (exactTrackedOrder.isFilled || exactTrackedOrder.filledQtyValue > 0.0)) {
-                    exactTrackedOrder
+                    val isAlreadyProcessed = orderDao.getOrderByOrderId(exactTrackedOrder.orderId)?.status.equals("Filled", ignoreCase = true)
+                    if (isAlreadyProcessed && triggeringFilledOrder == null) null else exactTrackedOrder
                 } else {
                     recentOrders.firstOrNull { order ->
                         order.side.equals(missingSide, ignoreCase = true) &&
                         (order.isFilled || order.filledQtyValue > 0.0) &&
                         order.orderId != remainingOrder.orderId &&
-                        (order.createdTime.toLongOrNull() ?: 0L) >= twoHoursAgo
+                        (order.createdTime.toLongOrNull() ?: 0L) >= minAllowedCreatedTime &&
+                        !orderDao.getOrderByOrderId(order.orderId)?.status.equals("Filled", ignoreCase = true)
                     }
                 }
 
-                val filledExec = (if (missingOrderId.isNotBlank()) {
+                val filledExec = if (exactTrackedOrder != null) {
+                    null
+                } else (if (missingOrderId.isNotBlank()) {
                     recentExecutions.firstOrNull { it.orderId == missingOrderId }
                 } else {
                     null
                 }) ?: recentExecutions.firstOrNull { exec ->
                     exec.side.equals(missingSide, ignoreCase = true) &&
                     exec.orderId != remainingOrder.orderId &&
-                    (exec.execTime.toLongOrNull() ?: 0L) >= twoHoursAgo
+                    (exec.execTime.toLongOrNull() ?: 0L) >= minAllowedCreatedTime
                 }
 
                 val lastBase = preferences.lastRebalancePrice
@@ -805,18 +818,37 @@ class BybitRepository(
                     if (lastBase > 0.0) lastBase * (1.0 - step / 100.0) else 0.0
                 }
 
-                // If genuine fill price exists, use it. Otherwise, use expectedGridPrice if valid, preserving grid geometry!
+                // CRITICAL SAFETY SHIELD 3: Geometric Boundary Check
+                // A genuine fill price must be within ±2x of step percent from expectedGridPrice.
+                // If an ancient or erroneous order price leaks in, fallback to expectedGridPrice!
                 val rawExecPrice = filledOrder?.avgPriceValue?.takeIf { it > 0.0 }
                     ?: filledExec?.priceValue?.takeIf { it > 0.0 }
                     ?: expectedGridPrice
 
-                val finalExecPrice = if (!isCancelledWithoutFill && rawExecPrice > 0.0) {
+                val isPriceWithinGridBounds = if (expectedGridPrice > 0.0 && rawExecPrice > 0.0) {
+                    val maxAllowedDeviation = (step / 100.0) * 2.0
+                    val deviation = Math.abs(rawExecPrice - expectedGridPrice) / expectedGridPrice
+                    deviation <= maxAllowedDeviation
+                } else true
+
+                val safeExecPrice = if (isPriceWithinGridBounds && rawExecPrice > 0.0) {
                     rawExecPrice
+                } else {
+                    log(LogLevel.WARN, callerTag, "Fiyat sapması engellendi (Tespit: $rawExecPrice, Beklenen: $expectedGridPrice). Güvenli ızgara fiyatı kullanılıyor.")
+                    if (expectedGridPrice > 0.0) expectedGridPrice else lastBase
+                }
+
+                val finalExecPrice = if (!isCancelledWithoutFill && safeExecPrice > 0.0) {
+                    safeExecPrice
                 } else {
                     if (lastBase > 0.0) lastBase else if (currentTickerPrice > 0.0) currentTickerPrice else 0.5
                 }
 
-                val execQty = filledOrder?.filledQtyValue ?: filledExec?.qtyValue ?: 0.0
+                val trackedDbOrder = if (missingOrderId.isNotBlank()) orderDao.getOrderByOrderId(missingOrderId) else null
+                val execQty = filledOrder?.filledQtyValue?.takeIf { it > 0.0 }
+                    ?: filledExec?.qtyValue?.takeIf { it > 0.0 }
+                    ?: trackedDbOrder?.qty?.takeIf { it > 0.0 }
+                    ?: remainingOrder.qtyValue
                 val execOrderId = filledOrder?.orderId
                     ?: filledExec?.orderId
                     ?: missingOrderId.ifBlank { "exec_${System.currentTimeMillis()}" }
@@ -960,18 +992,25 @@ class BybitRepository(
                         it.filledQtyValue == 0.0
                     }
 
-                val latestFilled = if (isCancelledOnly) null else recentOrders.firstOrNull { it.isFilled || it.filledQtyValue > 0.0 }
-                val latestExec = if (isCancelledOnly) null else recentExecutions.firstOrNull()
+                val minAllowedCreatedTime = maxOf(lastGridOrderPlacedTimeMs - 10_000L, System.currentTimeMillis() - 300_000L)
+                val latestFilled = if (isCancelledOnly) null else recentOrders.firstOrNull { order ->
+                    (order.isFilled || order.filledQtyValue > 0.0) &&
+                    (order.createdTime.toLongOrNull() ?: 0L) >= minAllowedCreatedTime &&
+                    !orderDao.getOrderByOrderId(order.orderId)?.status.equals("Filled", ignoreCase = true)
+                }
+                val latestExec = if (isCancelledOnly) null else recentExecutions.firstOrNull { exec ->
+                    (exec.execTime.toLongOrNull() ?: 0L) >= minAllowedCreatedTime
+                }
 
                 val tickerPrice = getTicker().getOrNull()?.currentPrice ?: 0.0
 
                 // Use stored base price first to prevent overwriting user-configured base prices
                 val basePrice = if (preferences.lastRebalancePrice > 0.0) {
                     preferences.lastRebalancePrice
-                } else if (tickerPrice > 0.0) {
-                    tickerPrice
                 } else if (latestFilled != null && latestFilled.avgPriceValue > 0.0) {
                     latestFilled.avgPriceValue
+                } else if (tickerPrice > 0.0) {
+                    tickerPrice
                 } else {
                     0.5
                 }
