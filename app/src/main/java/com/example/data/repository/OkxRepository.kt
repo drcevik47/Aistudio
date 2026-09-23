@@ -169,6 +169,10 @@ class OkxRepository(
         null
     }
 
+    fun getCachedInstrumentInfo(symbol: String = preferences.okxSymbol): com.example.data.remote.okx.model.OkxInstrument? {
+        return okxInstrumentCache[symbol]
+    }
+
     fun getPrecisionForSymbol(symbol: String = preferences.okxSymbol): Pair<Int?, Int?> {
         val inst = okxInstrumentCache[symbol]
         val qtyDecimals = inst?.lotSz?.let { com.example.bot.RebalanceEngine.stepToDecimals(it) }
@@ -233,6 +237,8 @@ class OkxRepository(
         clOrdId: String? = null
     ): Result<String> {
         return withContext(Dispatchers.IO) {
+            val effectiveClOrdId = clOrdId?.takeIf { it.isNotBlank() }
+                ?: "okx_${System.currentTimeMillis()}_${(100..999).random()}"
             try {
                 val api = createApiService()
                 val formattedQty = formatQty(qty, preferences.okxSymbol)
@@ -244,23 +250,50 @@ class OkxRepository(
                     sz = formattedQty,
                     px = price?.let { formatPrice(it, preferences.okxSymbol) },
                     tgtCcy = "base_ccy", // Force quantity to mean base coin (e.g. BTC)
-                    clOrdId = clOrdId
+                    clOrdId = effectiveClOrdId
                 )
-                val response = api.placeOrder(request)
-                if (response.code == "0" && response.data.isNotEmpty()) {
-                    val resData = response.data.first()
-                    if (resData.sCode == "0") {
-                        log(LogLevel.INFO, "OKX_ORDER", "Emir iletildi (${side} $qty). OrderId: ${resData.ordId}")
-                        Result.success(resData.ordId)
+                try {
+                    val response = api.placeOrder(request)
+                    if (response.code == "0" && response.data.isNotEmpty()) {
+                        val resData = response.data.first()
+                        if (resData.sCode == "0") {
+                            log(LogLevel.INFO, "OKX_ORDER", "Emir iletildi (${side} $qty). OrderId: ${resData.ordId}")
+                            Result.success(resData.ordId)
+                        } else {
+                            // Check for duplicate clOrdId codes (e.g. 51000, 51007, 51008, 51121)
+                            if (resData.sCode in listOf("51000", "51007", "51008", "51121")) {
+                                log(LogLevel.WARN, "OKX_ORDER", "OKX clOrdId ($effectiveClOrdId) zaten mevcut döndü (${resData.sCode}). Borsa sorgulanıyor...")
+                                val checkRes = api.getOrder(instId = preferences.okxSymbol, clOrdId = effectiveClOrdId)
+                                if (checkRes.code == "0" && checkRes.data.isNotEmpty()) {
+                                    val found = checkRes.data.first()
+                                    log(LogLevel.SUCCESS, "OKX_ORDER", "Çifte emir engellendi: Mevcut OKX emri tespit edildi (${found.ordId})")
+                                    return@withContext Result.success(found.ordId)
+                                }
+                            }
+                            val friendlyMsg = parseOkxErrorMessage(resData.sCode, resData.sMsg)
+                            log(LogLevel.ERROR, "OKX_ORDER", friendlyMsg)
+                            Result.failure(Exception(friendlyMsg))
+                        }
                     } else {
-                        val friendlyMsg = parseOkxErrorMessage(resData.sCode, resData.sMsg)
+                        val friendlyMsg = parseOkxErrorMessage(response.code, response.msg)
                         log(LogLevel.ERROR, "OKX_ORDER", friendlyMsg)
                         Result.failure(Exception(friendlyMsg))
                     }
-                } else {
-                    val friendlyMsg = parseOkxErrorMessage(response.code, response.msg)
-                    log(LogLevel.ERROR, "OKX_ORDER", friendlyMsg)
-                    Result.failure(Exception(friendlyMsg))
+                } catch (networkEx: Exception) {
+                    if (networkEx is kotlinx.coroutines.CancellationException) throw networkEx
+                    log(LogLevel.WARN, "OKX_ORDER", "Ağ zaman aşımı/hatası (${networkEx.message}). Emir OKX'e ulaşmış olabilir, $effectiveClOrdId sorgulanıyor...")
+                    kotlinx.coroutines.delay(800)
+                    try {
+                        val checkRes = api.getOrder(instId = preferences.okxSymbol, clOrdId = effectiveClOrdId)
+                        if (checkRes.code == "0" && checkRes.data.isNotEmpty()) {
+                            val found = checkRes.data.first()
+                            log(LogLevel.SUCCESS, "OKX_ORDER", "Zaman aşımı sonrası emir OKX'te kurtarıldı (${found.ordId}). Çifte emir engellendi.")
+                            return@withContext Result.success(found.ordId)
+                        }
+                    } catch (checkEx: Exception) {
+                        android.util.Log.w("OkxRepository", "Zaman aşımı sonrası kontrol hatası: ${checkEx.message}")
+                    }
+                    throw networkEx
                 }
             } catch (e: Exception) {
                 log(LogLevel.ERROR, "OKX_ORDER", "Ağ Hatası: ${e.message}")
@@ -329,6 +362,94 @@ class OkxRepository(
                     activeBuyId
                 }
 
+                // CRITICAL SAFETY SHIELD: Positive Proof of Fill Requirement
+                // An order missing from open orders CANNOT be assumed filled without explicit exchange proof.
+                var confirmedFilledOrder: com.example.data.remote.okx.model.OkxOrderDetails? = triggeringFilledOrder?.takeIf {
+                    it.state.equals("filled", ignoreCase = true) || ((it.accFillSz?.toDoubleOrNull() ?: 0.0) > 0.0)
+                }
+                var isExplicitlyCancelled = false
+
+                // 1. If not directly confirmed via WebSocket event, query OKX order history
+                if (confirmedFilledOrder == null) {
+                    try {
+                        val api = createApiService()
+                        val historyRes = api.getOrdersHistory(
+                            instType = "SPOT",
+                            instId = preferences.okxSymbol,
+                            ordId = missingOrderId.ifBlank { null },
+                            limit = 10
+                        )
+                        if (historyRes.code == "0" && historyRes.data.isNotEmpty()) {
+                            val historyOrder = if (missingOrderId.isNotBlank()) {
+                                historyRes.data.firstOrNull { it.ordId == missingOrderId }
+                            } else {
+                                historyRes.data.firstOrNull { it.side.equals(missingSide, ignoreCase = true) }
+                            }
+                            if (historyOrder != null) {
+                                if (historyOrder.state.equals("filled", ignoreCase = true) || 
+                                    ((historyOrder.accFillSz.toDoubleOrNull() ?: 0.0) > 0.0)) {
+                                    confirmedFilledOrder = historyOrder
+                                } else if (historyOrder.state.equals("canceled", ignoreCase = true) ||
+                                           historyOrder.state.equals("order_failed", ignoreCase = true)) {
+                                    isExplicitlyCancelled = true
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        log(LogLevel.WARN, callerTag, "OKX Emir geçmişi sorgulama uyarısı: ${e.message}")
+                    }
+                }
+
+                // 2. Also check OKX fills endpoint if still not confirmed
+                if (confirmedFilledOrder == null && !isExplicitlyCancelled) {
+                    try {
+                        val api = createApiService()
+                        val fillsRes = api.getFills(
+                            instType = "SPOT",
+                            instId = preferences.okxSymbol,
+                            limit = 10
+                        )
+                        if (fillsRes.code == "0" && fillsRes.data.isNotEmpty()) {
+                            val fillItem = if (missingOrderId.isNotBlank()) {
+                                fillsRes.data.firstOrNull { it.ordId == missingOrderId }
+                            } else {
+                                fillsRes.data.firstOrNull { it.side.equals(missingSide, ignoreCase = true) }
+                            }
+                            if (fillItem != null) {
+                                val fillQty = fillItem.fillSz.toDoubleOrNull() ?: 0.0
+                                val fillPx = fillItem.fillPx.toDoubleOrNull() ?: 0.0
+                                if (fillQty > 0.0 && fillPx > 0.0) {
+                                    confirmedFilledOrder = com.example.data.remote.okx.model.OkxOrderDetails(
+                                        ordId = fillItem.ordId.ifBlank { missingOrderId },
+                                        clOrdId = "",
+                                        instId = fillItem.instId.ifBlank { preferences.okxSymbol },
+                                        side = fillItem.side.ifBlank { missingSide },
+                                        px = fillItem.fillPx,
+                                        sz = fillItem.fillSz,
+                                        state = "filled",
+                                        accFillSz = fillItem.fillSz,
+                                        avgPx = fillItem.fillPx,
+                                        cTime = fillItem.ts,
+                                        uTime = fillItem.ts
+                                    )
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        log(LogLevel.WARN, callerTag, "OKX Fills sorgulama uyarısı: ${e.message}")
+                    }
+                }
+
+                // If neither filled nor cancelled can be verified from the exchange: SAFE WAIT!
+                if (confirmedFilledOrder == null && !isExplicitlyCancelled) {
+                    log(
+                        LogLevel.WARN,
+                        callerTag,
+                        "OKX Mutabakat: $missingSide emri ($missingOrderId) açık emirler arasında yok, ancak borsa dolum veya iptal kaydı henüz teyit edilemedi. Sahte dolum açılmaması için bekleniyor."
+                    )
+                    return@withContext Result.failure(Exception("OKX $missingSide emri için borsadan kesin dolum veya iptal kanıtı henüz alınamadı (işlem beklemede)."))
+                }
+
                 val lastBase = preferences.okxLastRebalancePrice
                 val step = preferences.okxStepPercent
 
@@ -338,8 +459,8 @@ class OkxRepository(
                     if (lastBase > 0.0) lastBase * (1.0 - step / 100.0) else 0.0
                 }
 
-                val directPrice = triggeringFilledOrder?.avgPx?.toDoubleOrNull()?.takeIf { it > 0.0 }
-                    ?: triggeringFilledOrder?.px?.toDoubleOrNull()?.takeIf { it > 0.0 }
+                val directPrice = confirmedFilledOrder?.avgPx?.toDoubleOrNull()?.takeIf { it > 0.0 }
+                    ?: confirmedFilledOrder?.px?.toDoubleOrNull()?.takeIf { it > 0.0 }
 
                 val rawPrice = directPrice ?: (if (expectedGridPrice > 0.0) expectedGridPrice else currentPrice)
                 val isPriceWithinGridBounds = if (expectedGridPrice > 0.0 && rawPrice > 0.0) {
@@ -354,24 +475,31 @@ class OkxRepository(
                     log(LogLevel.WARN, callerTag, "OKX Fiyat sapması engellendi (Tespit: $rawPrice, Beklenen: $expectedGridPrice). Güvenli ızgara fiyatı kullanılıyor.")
                     if (expectedGridPrice > 0.0) expectedGridPrice else lastBase
                 }
-                val execOrderId = missingOrderId.ifBlank { "okx_exec_${System.currentTimeMillis()}" }
+                val execOrderId = confirmedFilledOrder?.ordId?.ifBlank { missingOrderId } ?: missingOrderId.ifBlank { "okx_exec_${System.currentTimeMillis()}" }
 
-                // Retrieve expected quantity: check DB for tracked order or use opposite symmetric grid order size
-                val trackedOrderInDb = if (missingOrderId.isNotBlank()) database.orderDao().getOrderByOrderId(missingOrderId) else null
-                val remainingQty = remainingOrder.sz.toDoubleOrNull() ?: 0.0
-                val directQty = triggeringFilledOrder?.accFillSz?.toDoubleOrNull()?.takeIf { it > 0.0 }
-                    ?: triggeringFilledOrder?.sz?.toDoubleOrNull()?.takeIf { it > 0.0 }
-                val estimatedQty = directQty ?: (trackedOrderInDb?.qty?.takeIf { it > 0.0 } ?: remainingQty)
+                // Retrieve verified quantity from exchange: NEVER fallback to unverified remainingOrder size!
+                val verifiedQty = confirmedFilledOrder?.accFillSz?.toDoubleOrNull()?.takeIf { it > 0.0 }
+                    ?: confirmedFilledOrder?.sz?.toDoubleOrNull()?.takeIf { it > 0.0 }
+                    ?: 0.0
 
-                log(LogLevel.SUCCESS, callerTag, "OKX Mutabakat: $missingSide emri GERÇEKLEŞMİŞ! Fiyat: $finalExecPrice, Miktar: $estimatedQty ($execOrderId)")
+                if (isExplicitlyCancelled) {
+                    log(LogLevel.WARN, callerTag, "OKX $missingSide emri ($missingOrderId) borsada iptal edilmiş (dolum yok). Karşı açık emir temizlenip yeni ızgara açılıyor...")
+                } else {
+                    if (verifiedQty <= 0.0) {
+                        log(LogLevel.ERROR, callerTag, "OKX $missingSide emri için borsa dolum miktarı 0 veya geçersiz ($verifiedQty). Yeni ızgara açılması durduruldu.")
+                        return@withContext Result.failure(Exception("OKX Geçersiz dolum miktarı ($verifiedQty)"))
+                    }
 
-                recordOrderFilled(
-                    orderId = execOrderId,
-                    side = missingSide,
-                    price = finalExecPrice,
-                    qty = estimatedQty,
-                    triggerReason = "reconciliation"
-                )
+                    log(LogLevel.SUCCESS, callerTag, "OKX Mutabakat: $missingSide emri GERÇEKLEŞMİŞ! Fiyat: $finalExecPrice, Miktar: $verifiedQty ($execOrderId)")
+
+                    recordOrderFilled(
+                        orderId = execOrderId,
+                        side = missingSide,
+                        price = finalExecPrice,
+                        qty = verifiedQty,
+                        triggerReason = "reconciliation"
+                    )
+                }
 
                 log(LogLevel.INFO, callerTag, "OKX Karşı açık emir (${remainingOrder.side} ${remainingOrder.ordId}) iptal ediliyor...")
                 val cancelRes = cancelOrder(remainingOrder.ordId)
@@ -381,7 +509,7 @@ class OkxRepository(
                     return@withContext Result.failure(Exception("OKX Karşı emir (${remainingOrder.ordId}) iptal edilemediği için yeni ızgara açılamaz: $cancelErr"))
                 }
 
-                preferences.okxLastRebalancePrice = finalExecPrice
+                preferences.okxLastRebalancePrice = if (isExplicitlyCancelled) (if (currentPrice > 0.0) currentPrice else finalExecPrice) else finalExecPrice
                 preferences.okxActiveBuyOrderId = ""
                 preferences.okxActiveSellOrderId = ""
             } else if (openBuyOrder == null && openSellOrder == null) {
@@ -399,6 +527,8 @@ class OkxRepository(
 
             val inst = getInstrumentInfo(preferences.okxSymbol)
             val (qtyPrec, pricePrec) = getPrecisionForSymbol(preferences.okxSymbol)
+            val minSz = inst?.minSz?.toDoubleOrNull()
+            val minAmt = maxOf(2.0, (minSz ?: 0.0) * basePrice)
             val gridPlan = com.example.bot.RebalanceEngine.calculateGridOrders(
                 usdtBalance = usdtBalance,
                 baseCoinBalance = baseCoinBalance,
@@ -407,19 +537,23 @@ class OkxRepository(
                 qtyPrecision = qtyPrec,
                 pricePrecision = pricePrec,
                 tickSize = inst?.tickSz,
-                lotStep = inst?.lotSz
+                lotStep = inst?.lotSz,
+                minOrderAmt = minAmt,
+                minOrderQty = minSz
             )
 
             if (!gridPlan.isValid) {
                 return@withContext Result.failure(Exception("OKX Grid planı geçersiz: ${gridPlan.validationMessage}"))
             }
 
+            val cycleTag = "okx_${System.currentTimeMillis()}"
             // Place Sell Order
             val sellRes = createOrder(
                 side = "sell",
                 orderType = "limit",
                 qty = gridPlan.sellBaseQty,
-                price = gridPlan.sellLimitPrice
+                price = gridPlan.sellLimitPrice,
+                clOrdId = "${cycleTag}_s"
             )
 
             // Place Buy Order
@@ -427,7 +561,8 @@ class OkxRepository(
                 side = "buy",
                 orderType = "limit",
                 qty = gridPlan.buyBaseQty,
-                price = gridPlan.buyLimitPrice
+                price = gridPlan.buyLimitPrice,
+                clOrdId = "${cycleTag}_b"
             )
 
             if (sellRes.isSuccess && buyRes.isSuccess) {
@@ -491,6 +626,32 @@ class OkxRepository(
                     val resData = response.data.first()
                     if (resData.sCode == "0") {
                         Result.success(resData.ordId)
+                    } else if (resData.sCode in listOf("51400", "51401", "51402")) {
+                        // Order already cancelled, filled or doesn't exist on active book.
+                        // Check if it was actually FILLED on OKX so we don't lose the fill record!
+                        try {
+                            val checkRes = api.getOrder(instId = preferences.okxSymbol, ordId = orderId)
+                            if (checkRes.code == "0" && checkRes.data.isNotEmpty()) {
+                                val ord = checkRes.data.first()
+                                if (ord.state.equals("filled", ignoreCase = true) || (ord.accFillSz?.toDoubleOrNull() ?: 0.0) > 0.0) {
+                                    log(LogLevel.WARN, "OKX_CANCEL", "İptal edilmek istenen emir ($orderId) OKX'te DOLMUŞ! Dolum kaydı işleniyor.")
+                                    val px = ord.avgPx?.toDoubleOrNull() ?: ord.px?.toDoubleOrNull() ?: 0.0
+                                    val sz = ord.accFillSz?.toDoubleOrNull() ?: 0.0
+                                    if (px > 0.0 && sz > 0.0) {
+                                        recordOrderFilled(
+                                            orderId = orderId,
+                                            side = ord.side.replaceFirstChar { it.uppercase() },
+                                            price = px,
+                                            qty = sz,
+                                            triggerReason = "CancelCheckFill"
+                                        )
+                                    }
+                                }
+                            }
+                        } catch (ex: Exception) {
+                            android.util.Log.w("OkxRepository", "Cancel fill check hatası: ${ex.message}")
+                        }
+                        Result.success(orderId)
                     } else {
                         Result.failure(Exception("${resData.sCode} - ${resData.sMsg}"))
                     }
@@ -524,6 +685,10 @@ class OkxRepository(
         triggerReason: String = "",
         fillTime: Long = System.currentTimeMillis()
     ) = withContext(Dispatchers.IO) {
+        if (price <= 0.0 || qty <= 0.0) {
+            log(LogLevel.WARN, "OkxOrderFill", "Dolum kaydı reddedildi: Geçersiz fiyat ($price) veya miktar ($qty) ($orderId)")
+            return@withContext
+        }
         try {
             database.withTransaction {
                 val effectiveTime = if (fillTime > 0L) fillTime else System.currentTimeMillis()

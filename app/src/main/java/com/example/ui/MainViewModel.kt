@@ -260,13 +260,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             val (qtyPrec, pricePrec) = repository.getPrecisionForSymbol(preferences.bybitSymbol)
+            val bybitInfo = repository.getCachedInstrumentInfo(preferences.bybitSymbol)
+            val bybitMinAmt = bybitInfo?.lotSizeFilter?.minOrderAmt?.toDoubleOrNull() ?: 5.0
+            val bybitMinQty = bybitInfo?.lotSizeFilter?.minOrderQty?.toDoubleOrNull()
+            val bybitMaxQty = bybitInfo?.lotSizeFilter?.maxOrderQty?.toDoubleOrNull()
             val gridPlan = RebalanceEngine.calculateGridOrders(
                 usdtBalance = usdt,
                 baseCoinBalance = baseQty,
                 basePrice = anchorBasePrice,
                 stepPercent = _uiState.value.stepPercent,
                 qtyPrecision = qtyPrec,
-                pricePrecision = pricePrec
+                pricePrecision = pricePrec,
+                tickSize = bybitInfo?.priceFilter?.tickSize,
+                lotStep = bybitInfo?.lotSizeFilter?.basePrecision,
+                minOrderAmt = bybitMinAmt,
+                minOrderQty = bybitMinQty,
+                maxOrderQty = bybitMaxQty
             )
 
             okxDeferred.await()
@@ -467,13 +476,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             instrumentDeferred.await()
             val (qtyPrec, pricePrec) = repository.getPrecisionForSymbol(preferences.bybitSymbol)
+            val bybitInfo = repository.getCachedInstrumentInfo(preferences.bybitSymbol)
+            val bybitMinAmt = bybitInfo?.lotSizeFilter?.minOrderAmt?.toDoubleOrNull() ?: 5.0
+            val bybitMinQty = bybitInfo?.lotSizeFilter?.minOrderQty?.toDoubleOrNull()
+            val bybitMaxQty = bybitInfo?.lotSizeFilter?.maxOrderQty?.toDoubleOrNull()
             val gridPlan = RebalanceEngine.calculateGridOrders(
                 usdtBalance = usdt,
                 baseCoinBalance = baseQty,
                 basePrice = anchorBasePrice,
                 stepPercent = _uiState.value.stepPercent,
                 qtyPrecision = qtyPrec,
-                pricePrecision = pricePrec
+                pricePrecision = pricePrec,
+                tickSize = bybitInfo?.priceFilter?.tickSize,
+                lotStep = bybitInfo?.lotSizeFilter?.basePrecision,
+                minOrderAmt = bybitMinAmt,
+                minOrderQty = bybitMinQty,
+                maxOrderQty = bybitMaxQty
             )
 
             val shouldShowInitialDialog = !analysis.isBalanced5050 &&
@@ -554,6 +572,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             okxCurrentPrice
         }
         val (okxQtyPrec, okxPricePrec) = okxRepository.getPrecisionForSymbol(preferences.okxSymbol)
+        val okxInst = okxRepository.getCachedInstrumentInfo(preferences.okxSymbol)
+        val okxMinSz = okxInst?.minSz?.toDoubleOrNull()
+        val okxMinAmt = maxOf(2.0, (okxMinSz ?: 0.0) * anchorOkxBasePrice)
         val okxPlan = if (okxCurrentPrice > 0.0) {
             RebalanceEngine.calculateGridOrders(
                 usdtBalance = okxUsdt,
@@ -561,7 +582,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 basePrice = anchorOkxBasePrice,
                 stepPercent = preferences.okxStepPercent,
                 qtyPrecision = okxQtyPrec,
-                pricePrecision = okxPricePrec
+                pricePrecision = okxPricePrec,
+                tickSize = okxInst?.tickSz,
+                lotStep = okxInst?.lotSz,
+                minOrderAmt = okxMinAmt,
+                minOrderQty = okxMinSz
             )
         } else null
 
@@ -587,13 +612,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             state.currentPrice
         }
         val (qtyPrec, pricePrec) = repository.getPrecisionForSymbol(preferences.bybitSymbol)
+        val bybitInfo = repository.getCachedInstrumentInfo(preferences.bybitSymbol)
+        val bybitMinAmt = bybitInfo?.lotSizeFilter?.minOrderAmt?.toDoubleOrNull() ?: 5.0
+        val bybitMinQty = bybitInfo?.lotSizeFilter?.minOrderQty?.toDoubleOrNull()
+        val bybitMaxQty = bybitInfo?.lotSizeFilter?.maxOrderQty?.toDoubleOrNull()
         val plan = RebalanceEngine.calculateGridOrders(
             usdtBalance = state.usdtBalance,
             baseCoinBalance = state.baseCoinBalance,
             basePrice = anchorBasePrice,
             stepPercent = state.stepPercent,
             qtyPrecision = qtyPrec,
-            pricePrecision = pricePrec
+            pricePrecision = pricePrec,
+            tickSize = bybitInfo?.priceFilter?.tickSize,
+            lotStep = bybitInfo?.lotSizeFilter?.basePrecision,
+            minOrderAmt = bybitMinAmt,
+            minOrderQty = bybitMinQty,
+            maxOrderQty = bybitMaxQty
         )
 
         val anchorOkxBasePrice = if (preferences.isOkxBotActive && preferences.okxLastRebalancePrice > 0.0) {
@@ -602,6 +636,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             state.okxCurrentPrice
         }
         val (okxQtyPrec, okxPricePrec) = okxRepository.getPrecisionForSymbol(preferences.okxSymbol)
+        val okxInst = okxRepository.getCachedInstrumentInfo(preferences.okxSymbol)
+        val okxMinSz = okxInst?.minSz?.toDoubleOrNull()
+        val okxMinAmt = maxOf(2.0, (okxMinSz ?: 0.0) * anchorOkxBasePrice)
         val okxPlan = if (state.okxCurrentPrice > 0.0) {
             RebalanceEngine.calculateGridOrders(
                 usdtBalance = state.okxUsdtBalance,
@@ -609,7 +646,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 basePrice = anchorOkxBasePrice,
                 stepPercent = state.okxStepPercent,
                 qtyPrecision = okxQtyPrec,
-                pricePrecision = okxPricePrec
+                pricePrecision = okxPricePrec,
+                tickSize = okxInst?.tickSz,
+                lotStep = okxInst?.lotSz,
+                minOrderAmt = okxMinAmt,
+                minOrderQty = okxMinSz
             )
         } else null
 

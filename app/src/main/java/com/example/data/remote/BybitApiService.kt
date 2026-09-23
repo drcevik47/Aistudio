@@ -63,7 +63,9 @@ interface BybitApiService {
     suspend fun getOpenOrders(
         @HeaderMap headers: Map<String, String>,
         @Query("category") category: String = "spot",
-        @Query("symbol") symbol: String = "MNTUSDT"
+        @Query("symbol") symbol: String = "MNTUSDT",
+        @Query("orderId") orderId: String? = null,
+        @Query("orderLinkId") orderLinkId: String? = null
     ): Response<BybitApiResponse<OpenOrdersResult>>
 
     @GET("/v5/order/history")
@@ -71,7 +73,8 @@ interface BybitApiService {
         @HeaderMap headers: Map<String, String>,
         @Query("category") category: String = "spot",
         @Query("symbol") symbol: String = "MNTUSDT",
-        @Query("orderId") orderId: String? = null
+        @Query("orderId") orderId: String? = null,
+        @Query("orderLinkId") orderLinkId: String? = null
     ): Response<BybitApiResponse<OpenOrdersResult>>
 
     @GET("/v5/order/history")

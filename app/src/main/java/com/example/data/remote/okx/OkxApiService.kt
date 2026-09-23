@@ -49,6 +49,25 @@ interface OkxApiService {
         @Query("ordType") ordType: String? = null
     ): OkxResponse<OkxOrderDetails>
 
+    // https://www.okx.com/api/v5/trade/orders-history
+    @GET("/api/v5/trade/orders-history")
+    suspend fun getOrdersHistory(
+        @Query("instType") instType: String = "SPOT",
+        @Query("instId") instId: String? = null,
+        @Query("ordId") ordId: String? = null,
+        @Query("clOrdId") clOrdId: String? = null,
+        @Query("state") state: String? = null,
+        @Query("limit") limit: Int = 100
+    ): OkxResponse<OkxOrderDetails>
+
+    // https://www.okx.com/api/v5/trade/order
+    @GET("/api/v5/trade/order")
+    suspend fun getOrder(
+        @Query("instId") instId: String,
+        @Query("ordId") ordId: String? = null,
+        @Query("clOrdId") clOrdId: String? = null
+    ): OkxResponse<OkxOrderDetails>
+
     // https://www.okx.com/api/v5/trade/orders-history-archive
     @GET("/api/v5/trade/orders-history-archive")
     suspend fun getOrderHistoryArchive(

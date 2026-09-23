@@ -177,6 +177,10 @@ class BybitRepository(
         null
     }
 
+    fun getCachedInstrumentInfo(symbol: String = preferences.bybitSymbol): com.example.data.remote.model.SpotInstrumentInfo? {
+        return instrumentInfoCache[symbol]
+    }
+
     fun getPrecisionForSymbol(symbol: String = preferences.bybitSymbol): Pair<Int?, Int?> {
         val info = instrumentInfoCache[symbol]
         val qtyDecimals = info?.lotSizeFilter?.basePrecision?.let { com.example.bot.RebalanceEngine.stepToDecimals(it) }
@@ -373,6 +377,7 @@ class BybitRepository(
         qty: Double,
         price: Double? = null,
         triggerReason: String = "Manual",
+        customOrderLinkId: String? = null,
         apiKey: String = preferences.apiKey,
         apiSecret: String = preferences.apiSecret,
         isTestnet: Boolean = preferences.isTestnet
@@ -388,7 +393,8 @@ class BybitRepository(
             }
 
             val formattedPrice = price?.let { formatPrice(it) }
-            val orderLinkId = "bot_${System.currentTimeMillis()}_${(100..999).random()}"
+            val orderLinkId = customOrderLinkId?.takeIf { it.isNotBlank() }
+                ?: "bot_${System.currentTimeMillis()}_${(100..999).random()}"
 
             // Construct exact JSON payload
             val jsonObject = JSONObject().apply {
@@ -401,9 +407,6 @@ class BybitRepository(
                     put("price", formattedPrice)
                     put("timeInForce", "GTC")
                 } else if (orderType.equals("Market", ignoreCase = true)) {
-                    // In Bybit V5 Spot:
-                    // For Market Buy, when qty is in base currency (MNT), marketUnit must be "baseCoin".
-                    // For Market Sell, qty is always baseCoin. Setting marketUnit explicitly ensures compatibility.
                     put("marketUnit", "baseCoin")
                 }
                 put("orderLinkId", orderLinkId)
@@ -415,45 +418,121 @@ class BybitRepository(
             val requestBody = jsonString.toRequestBody("application/json; charset=utf-8".toMediaType())
 
             val api = createApiService(isTestnet)
-            val response = api.createOrder(headers, requestBody)
-            if (response.isSuccessful) {
-                val body = response.body()
-                if (body != null && body.isSuccess && body.result != null) {
-                    val orderId = body.result.orderId
-                    lastGridOrderPlacedTimeMs = System.currentTimeMillis()
+            try {
+                val response = api.createOrder(headers, requestBody)
+                if (response.isSuccessful) {
+                    val body = response.body()
+                    if (body != null && body.isSuccess && body.result != null) {
+                        val orderId = body.result.orderId
+                        lastGridOrderPlacedTimeMs = System.currentTimeMillis()
+                        val orderEntity = OrderEntity(
+                            orderId = orderId,
+                            orderLinkId = orderLinkId,
+                            symbol = preferences.bybitSymbol,
+                            side = side,
+                            orderType = orderType,
+                            price = price ?: 0.0,
+                            qty = formattedQty.toDouble(),
+                            status = "New",
+                            filledQty = 0.0,
+                            avgPrice = price ?: 0.0,
+                            triggerReason = triggerReason
+                        )
+                        orderDao.insertOrder(orderEntity)
+                        log(
+                            LogLevel.SUCCESS,
+                            "OrderCreate",
+                            "Emir iletildi: $side $formattedQty MNT @ ${formattedPrice ?: "Market"}",
+                            "OrderId: $orderId | Neden: $triggerReason"
+                        )
+                        return@withContext Result.success(orderId)
+                    } else {
+                        val code = body?.retCode ?: -1
+                        val msg = body?.retMsg ?: "Emir oluşturulamadı"
+                        // Duplicate orderLinkId detection (codes 10006, 10007, 10024, 110012, 170140)
+                        if (code in listOf(10006, 10007, 10024, 110012, 170140)) {
+                            log(LogLevel.WARN, "OrderCreate", "Bybit orderLinkId ($orderLinkId) zaten mevcut döndü ($code: $msg). Borsa sorgulanıyor...")
+                            val existing = findOrderByLinkId(orderLinkId, apiKey = apiKey, apiSecret = apiSecret, isTestnet = isTestnet)
+                            if (existing != null) {
+                                val orderId = existing.orderId
+                                val orderEntity = OrderEntity(
+                                    orderId = orderId,
+                                    orderLinkId = orderLinkId,
+                                    symbol = preferences.bybitSymbol,
+                                    side = side,
+                                    orderType = orderType,
+                                    price = price ?: (existing.price.toDoubleOrNull() ?: 0.0),
+                                    qty = formattedQty.toDouble(),
+                                    status = existing.orderStatus,
+                                    filledQty = existing.filledQtyValue,
+                                    avgPrice = existing.avgPriceValue,
+                                    triggerReason = triggerReason
+                                )
+                                orderDao.insertOrder(orderEntity)
+                                log(LogLevel.SUCCESS, "OrderCreate", "Çifte emir engellendi: Mevcut emir tespit edildi ($orderId)")
+                                return@withContext Result.success(orderId)
+                            }
+                        }
+                        val formattedErr = parseBybitErrorMessage(code, msg)
+                        log(LogLevel.ERROR, "OrderCreate", formattedErr, "İstek gövdesi: $jsonString")
+                        return@withContext Result.failure(Exception(formattedErr))
+                    }
+                } else {
+                    val httpCode = response.code()
+                    val errBody = response.errorBody()?.string() ?: ""
+                    if (httpCode in 500..599 || httpCode == 408) {
+                        log(LogLevel.WARN, "OrderCreate", "HTTP $httpCode alındı. Emir borsaya ulaşmış olabilir. Idempotency kontrolü yapılıyor ($orderLinkId)...")
+                        delay(600)
+                        val existing = findOrderByLinkId(orderLinkId, apiKey = apiKey, apiSecret = apiSecret, isTestnet = isTestnet)
+                        if (existing != null) {
+                            val orderId = existing.orderId
+                            val orderEntity = OrderEntity(
+                                orderId = orderId,
+                                orderLinkId = orderLinkId,
+                                symbol = preferences.bybitSymbol,
+                                side = side,
+                                orderType = orderType,
+                                price = price ?: (existing.price.toDoubleOrNull() ?: 0.0),
+                                qty = formattedQty.toDouble(),
+                                status = existing.orderStatus,
+                                filledQty = existing.filledQtyValue,
+                                avgPrice = existing.avgPriceValue,
+                                triggerReason = triggerReason
+                            )
+                            orderDao.insertOrder(orderEntity)
+                            log(LogLevel.SUCCESS, "OrderCreate", "HTTP $httpCode sonrası emir borsada bulundu ($orderId). Çifte emir engellendi.")
+                            return@withContext Result.success(orderId)
+                        }
+                    }
+                    val err = "HTTP ${response.code()}: ${response.message()} $errBody".trim()
+                    log(LogLevel.ERROR, "OrderCreate", "HTTP Hatası: $err", "İstek: $jsonString")
+                    return@withContext Result.failure(Exception(err))
+                }
+            } catch (networkEx: Exception) {
+                if (networkEx is CancellationException) throw networkEx
+                log(LogLevel.WARN, "OrderCreate", "Ağ zaman aşımı/hatası (${networkEx.message}). Emir borsaya ulaşmış olabilir, $orderLinkId sorgulanıyor...")
+                delay(800)
+                val existing = findOrderByLinkId(orderLinkId, apiKey = apiKey, apiSecret = apiSecret, isTestnet = isTestnet)
+                if (existing != null) {
+                    val orderId = existing.orderId
                     val orderEntity = OrderEntity(
                         orderId = orderId,
                         orderLinkId = orderLinkId,
                         symbol = preferences.bybitSymbol,
                         side = side,
                         orderType = orderType,
-                        price = price ?: 0.0,
+                        price = price ?: (existing.price.toDoubleOrNull() ?: 0.0),
                         qty = formattedQty.toDouble(),
-                        status = "New",
-                        filledQty = 0.0,
-                        avgPrice = price ?: 0.0,
+                        status = existing.orderStatus,
+                        filledQty = existing.filledQtyValue,
+                        avgPrice = existing.avgPriceValue,
                         triggerReason = triggerReason
                     )
                     orderDao.insertOrder(orderEntity)
-                    log(
-                        LogLevel.SUCCESS,
-                        "OrderCreate",
-                        "Emir iletildi: $side $formattedQty MNT @ ${formattedPrice ?: "Market"}",
-                        "OrderId: $orderId | Neden: $triggerReason"
-                    )
-                    Result.success(orderId)
-                } else {
-                    val code = body?.retCode ?: -1
-                    val msg = body?.retMsg ?: "Emir oluşturulamadı"
-                    val formattedErr = parseBybitErrorMessage(code, msg)
-                    log(LogLevel.ERROR, "OrderCreate", formattedErr, "İstek gövdesi: $jsonString")
-                    Result.failure(Exception(formattedErr))
+                    log(LogLevel.SUCCESS, "OrderCreate", "Zaman aşımı sonrası emir borsada kurtarıldı ($orderId). Çifte emir engellendi.")
+                    return@withContext Result.success(orderId)
                 }
-            } else {
-                val errBody = response.errorBody()?.string() ?: ""
-                val err = "HTTP ${response.code()}: ${response.message()} $errBody".trim()
-                log(LogLevel.ERROR, "OrderCreate", "HTTP Hatası: $err", "İstek: $jsonString")
-                Result.failure(Exception(err))
+                throw networkEx
             }
         } catch (e: Exception) {
             log(LogLevel.ERROR, "OrderCreate", "İstek hatası: ${e.localizedMessage}")
@@ -493,7 +572,26 @@ class BybitRepository(
                     val code = body?.retCode ?: -1
                     val msg = body?.retMsg ?: "İptal başarısız"
                     if (code == 170213 || code == 170170 || code == 110001) {
-                        // Order already cancelled or filled or doesn't exist
+                        // Order already cancelled or filled or doesn't exist on active book.
+                        // Check if it was actually FILLED on Bybit so we don't miss a fill!
+                        try {
+                            val histRes = getOrderHistory(orderId = orderId, apiKey = apiKey, apiSecret = apiSecret, isTestnet = isTestnet)
+                            val histOrder = histRes.getOrNull()
+                            if (histOrder != null && (histOrder.isFilled || histOrder.filledQtyValue > 0.0)) {
+                                log(LogLevel.WARN, "OrderCancel", "İptal edilmek istenen emir ($orderId) borsada DOLMUŞ! Dolum kaydı işleniyor.")
+                                val p = histOrder.avgPriceValue.takeIf { it > 0.0 } ?: histOrder.priceValue
+                                val q = histOrder.filledQtyValue
+                                recordOrderFilled(
+                                    orderId = orderId,
+                                    side = histOrder.side,
+                                    price = p,
+                                    qty = q,
+                                    triggerReason = "CancelCheckFill"
+                                )
+                            }
+                        } catch (ex: Exception) {
+                            Log.w("BybitRepository", "Cancel fill check hatası: ${ex.message}")
+                        }
                         orderDao.deleteOrder(orderId)
                         Result.success(true)
                     } else {
@@ -510,6 +608,39 @@ class BybitRepository(
         } catch (e: Exception) {
             log(LogLevel.ERROR, "OrderCancel", "İptal isteği hatası: ${e.localizedMessage}")
             Result.failure(e)
+        }
+    }
+
+    suspend fun findOrderByLinkId(
+        orderLinkId: String,
+        category: String = "spot",
+        symbol: String = preferences.bybitSymbol,
+        apiKey: String = preferences.apiKey,
+        apiSecret: String = preferences.apiSecret,
+        isTestnet: Boolean = preferences.isTestnet
+    ): BybitOrderDto? = withContext(Dispatchers.IO) {
+        if (orderLinkId.isBlank() || apiKey.isBlank() || apiSecret.isBlank()) return@withContext null
+        try {
+            val api = createApiService(isTestnet)
+            // 1. Check open orders first
+            val qOpen = "category=$category&symbol=$symbol&orderLinkId=$orderLinkId"
+            val hOpen = createAuthHeaders(apiKey, apiSecret, qOpen)
+            val openRes = api.getOpenOrders(hOpen, category, symbol, null, orderLinkId)
+            if (openRes.isSuccessful && openRes.body()?.isSuccess == true) {
+                val found = openRes.body()?.result?.list?.firstOrNull()
+                if (found != null) return@withContext found
+            }
+            // 2. Check order history
+            val qHist = "category=$category&symbol=$symbol&orderLinkId=$orderLinkId"
+            val hHist = createAuthHeaders(apiKey, apiSecret, qHist)
+            val histRes = api.getOrderHistory(hHist, category, symbol, null, orderLinkId)
+            if (histRes.isSuccessful && histRes.body()?.isSuccess == true) {
+                return@withContext histRes.body()?.result?.list?.firstOrNull()
+            }
+            null
+        } catch (e: Exception) {
+            Log.w("BybitRepository", "findOrderByLinkId hatası: ${e.message}")
+            null
         }
     }
 
@@ -558,7 +689,8 @@ class BybitRepository(
     }
 
     suspend fun getOrderHistory(
-        orderId: String,
+        orderId: String? = null,
+        orderLinkId: String? = null,
         category: String = "spot",
         symbol: String = preferences.bybitSymbol,
         apiKey: String = preferences.apiKey,
@@ -571,10 +703,13 @@ class BybitRepository(
             }
 
             val api = createApiService(isTestnet)
-            val queryString = "category=$category&symbol=$symbol&orderId=$orderId"
+            val queryParts = mutableListOf("category=$category", "symbol=$symbol")
+            if (!orderId.isNullOrBlank()) queryParts.add("orderId=$orderId")
+            if (!orderLinkId.isNullOrBlank()) queryParts.add("orderLinkId=$orderLinkId")
+            val queryString = queryParts.joinToString("&")
             val headers = createAuthHeaders(apiKey, apiSecret, queryString)
 
-            val response = api.getOrderHistory(headers, category, symbol, orderId)
+            val response = api.getOrderHistory(headers, category, symbol, orderId, orderLinkId)
             if (response.isSuccessful && response.body()?.isSuccess == true) {
                 val order = response.body()?.result?.list?.firstOrNull()
                 Result.success(order)
@@ -808,14 +943,48 @@ class BybitRepository(
                 val step = preferences.stepPercent
                 val currentTickerPrice = getTicker().getOrNull()?.currentPrice ?: 0.0
 
-                if (isCancelledWithoutFill) {
+                // CRITICAL SAFETY SHIELD: Positive Proof of Fill or Explicit Cancellation
+                var confirmedBybitOrder: BybitOrderDto? = filledOrder
+                var confirmedBybitExec: BybitExecutionDto? = filledExec
+                var isExplicitlyCancelled = isCancelledWithoutFill
+
+                if (confirmedBybitOrder == null && confirmedBybitExec == null && !isExplicitlyCancelled && missingOrderId.isNotBlank()) {
+                    try {
+                        val histRes = getOrderHistory(orderId = missingOrderId)
+                        if (histRes.isSuccess) {
+                            val histOrder = histRes.getOrNull()
+                            if (histOrder != null) {
+                                if (histOrder.isFilled || histOrder.filledQtyValue > 0.0) {
+                                    confirmedBybitOrder = histOrder
+                                } else if (histOrder.orderStatus.equals("Cancelled", ignoreCase = true) ||
+                                           histOrder.orderStatus.equals("Deactivated", ignoreCase = true)) {
+                                    isExplicitlyCancelled = true
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        log(LogLevel.WARN, callerTag, "Bybit Emir geçmişi sorgulama uyarısı: ${e.message}")
+                    }
+                }
+
+                // If neither positive fill nor explicit cancellation is proven: SAFE WAIT!
+                if (confirmedBybitOrder == null && confirmedBybitExec == null && !isExplicitlyCancelled) {
                     log(
                         LogLevel.WARN,
                         callerTag,
-                        "Mutabakat: $missingSide emri borsada iptal edilmiş (Gerçekleşme yok). Karşı emir temizlenip yeni ızgara açılıyor..."
+                        "Mutabakat: $missingSide emri ($missingOrderId) açık değil ancak borsada henüz dolum veya iptal kanıtı bulunamadı. Sahte işlem açılmaması için bekleniyor."
+                    )
+                    return@withContext Result.failure(Exception("Bybit $missingSide emri için borsadan kesin dolum veya iptal kanıtı henüz alınamadı (işlem beklemede)."))
+                }
+
+                if (isExplicitlyCancelled) {
+                    log(
+                        LogLevel.WARN,
+                        callerTag,
+                        "Mutabakat: $missingSide emri borsada iptal edilmiş (Gerçekleşme yok). Karşı açık emir temizlenip yeni ızgara açılıyor..."
                     )
                 } else {
-                    log(LogLevel.INFO, callerTag, "Izgarada sadece tek taraf açık (${remainingOrder.side} ${remainingOrder.orderId}). Karşı taraf ($missingSide) dolmuş olarak tespit edildi!")
+                    log(LogLevel.INFO, callerTag, "Izgarada tek taraf açık (${remainingOrder.side} ${remainingOrder.orderId}). Karşı taraf ($missingSide) doğrulanmış dolum olarak tespit edildi!")
                 }
 
                 // Calculate the theoretical grid execution price based on the previous base price and step ratio
@@ -828,8 +997,8 @@ class BybitRepository(
                 // CRITICAL SAFETY SHIELD 3: Geometric Boundary Check
                 // A genuine fill price must be within ±2x of step percent from expectedGridPrice.
                 // If an ancient or erroneous order price leaks in, fallback to expectedGridPrice!
-                val rawExecPrice = filledOrder?.avgPriceValue?.takeIf { it > 0.0 }
-                    ?: filledExec?.priceValue?.takeIf { it > 0.0 }
+                val rawExecPrice = confirmedBybitOrder?.avgPriceValue?.takeIf { it > 0.0 }
+                    ?: confirmedBybitExec?.priceValue?.takeIf { it > 0.0 }
                     ?: expectedGridPrice
 
                 val isPriceWithinGridBounds = if (expectedGridPrice > 0.0 && rawExecPrice > 0.0) {
@@ -845,26 +1014,29 @@ class BybitRepository(
                     if (expectedGridPrice > 0.0) expectedGridPrice else lastBase
                 }
 
-                val finalExecPrice = if (!isCancelledWithoutFill && safeExecPrice > 0.0) {
+                val finalExecPrice = if (!isExplicitlyCancelled && safeExecPrice > 0.0) {
                     safeExecPrice
                 } else {
                     if (lastBase > 0.0) lastBase else if (currentTickerPrice > 0.0) currentTickerPrice else 0.5
                 }
 
-                val trackedDbOrder = if (missingOrderId.isNotBlank()) orderDao.getOrderByOrderId(missingOrderId) else null
-                val execQty = filledOrder?.filledQtyValue?.takeIf { it > 0.0 }
-                    ?: filledExec?.qtyValue?.takeIf { it > 0.0 }
-                    ?: trackedDbOrder?.qty?.takeIf { it > 0.0 }
-                    ?: remainingOrder.qtyValue
-                val execOrderId = filledOrder?.orderId
-                    ?: filledExec?.orderId
+                val verifiedExecQty = confirmedBybitOrder?.filledQtyValue?.takeIf { it > 0.0 }
+                    ?: confirmedBybitExec?.qtyValue?.takeIf { it > 0.0 }
+                    ?: 0.0
+
+                val execOrderId = confirmedBybitOrder?.orderId
+                    ?: confirmedBybitExec?.orderId
                     ?: missingOrderId.ifBlank { "exec_${System.currentTimeMillis()}" }
 
-                if (!isCancelledWithoutFill) {
+                if (!isExplicitlyCancelled) {
+                    if (verifiedExecQty <= 0.0) {
+                        log(LogLevel.ERROR, callerTag, "Mutabakat: $missingSide emri için borsa dolum miktarı 0 veya geçersiz ($verifiedExecQty). Yeni ızgara açılması durduruldu.")
+                        return@withContext Result.failure(Exception("Bybit Geçersiz dolum miktarı ($verifiedExecQty)"))
+                    }
                     log(
                         LogLevel.SUCCESS,
                         callerTag,
-                        "Mutabakat: $missingSide emri GERÇEKLEŞMİŞ! Fiyat: $finalExecPrice, Miktar: $execQty MNT ($execOrderId)"
+                        "Mutabakat: $missingSide emri GERÇEKLEŞMİŞ! Fiyat: $finalExecPrice, Miktar: $verifiedExecQty ($execOrderId)"
                     )
                 }
 
@@ -882,16 +1054,16 @@ class BybitRepository(
                 preferences.activeBuyOrderId = ""
                 preferences.activeSellOrderId = ""
 
-                // 3. Record filled trade in Room database ONLY if genuinely filled
-                if (!isCancelledWithoutFill && (filledOrder != null || filledExec != null || execQty > 0.0 || missingOrderId.isNotBlank())) {
-                    val fillTime = filledOrder?.updatedTimeMillis?.takeIf { it > 0L }
-                        ?: filledExec?.timeMillis?.takeIf { it > 0L }
+                // 3. Record filled trade in Room database ONLY if genuinely filled with positive qty
+                if (!isExplicitlyCancelled && verifiedExecQty > 0.0) {
+                    val fillTime = confirmedBybitOrder?.updatedTimeMillis?.takeIf { it > 0L }
+                        ?: confirmedBybitExec?.timeMillis?.takeIf { it > 0L }
                         ?: System.currentTimeMillis()
                     recordOrderFilled(
                         orderId = execOrderId,
                         side = missingSide,
                         price = finalExecPrice,
-                        qty = execQty,
+                        qty = verifiedExecQty,
                         triggerReason = if (missingSide.equals("Buy", ignoreCase = true)) "GridStepDownBuy" else "GridStepUpSell",
                         fillTime = fillTime
                     )
@@ -915,6 +1087,9 @@ class BybitRepository(
                 if (usdt > 0.0 && mnt > 0.0 && finalExecPrice > 0.0) {
                     val info = getInstrumentInfo(preferences.bybitSymbol)
                     val (qtyPrec, pricePrec) = getPrecisionForSymbol(preferences.bybitSymbol)
+                    val minAmt = info?.lotSizeFilter?.minOrderAmt?.toDoubleOrNull() ?: 5.0
+                    val minQty = info?.lotSizeFilter?.minOrderQty?.toDoubleOrNull()
+                    val maxQty = info?.lotSizeFilter?.maxOrderQty?.toDoubleOrNull()
                     val plan = RebalanceEngine.calculateGridOrders(
                         usdtBalance = usdt,
                         baseCoinBalance = mnt,
@@ -923,17 +1098,22 @@ class BybitRepository(
                         qtyPrecision = qtyPrec,
                         pricePrecision = pricePrec,
                         tickSize = info?.priceFilter?.tickSize,
-                        lotStep = info?.lotSizeFilter?.basePrecision
+                        lotStep = info?.lotSizeFilter?.basePrecision,
+                        minOrderAmt = minAmt,
+                        minOrderQty = minQty,
+                        maxOrderQty = maxQty
                     )
 
                     if (plan.isValid) {
+                        val cycleNow = System.currentTimeMillis()
                         // Place new Limit Sell
                         val sellRes = createOrder(
                             side = "Sell",
                             orderType = "Limit",
                             qty = plan.sellBaseQty,
                             price = plan.sellLimitPrice,
-                            triggerReason = "GridStepUpSell"
+                            triggerReason = "GridStepUpSell",
+                            customOrderLinkId = "grid_${cycleNow}_s"
                         )
 
                         // Place new Limit Buy
@@ -942,7 +1122,8 @@ class BybitRepository(
                             orderType = "Limit",
                             qty = plan.buyBaseQty,
                             price = plan.buyLimitPrice,
-                            triggerReason = "GridStepDownBuy"
+                            triggerReason = "GridStepDownBuy",
+                            customOrderLinkId = "grid_${cycleNow}_b"
                         )
 
                         if (sellRes.isSuccess && buyRes.isSuccess) {
@@ -962,13 +1143,13 @@ class BybitRepository(
 
                             return@withContext Result.success(
                                 ReconciliationResult(
-                                    executedOrderFound = !isCancelledWithoutFill,
-                                    executedSide = if (!isCancelledWithoutFill) missingSide else null,
+                                    executedOrderFound = !isExplicitlyCancelled,
+                                    executedSide = if (!isExplicitlyCancelled) missingSide else null,
                                     executedPrice = finalExecPrice,
-                                    executedQty = execQty,
-                                    executedOrderId = if (!isCancelledWithoutFill) execOrderId else "",
+                                    executedQty = verifiedExecQty,
+                                    executedOrderId = if (!isExplicitlyCancelled) execOrderId else "",
                                     newBasePrice = finalExecPrice,
-                                    message = if (!isCancelledWithoutFill) "$missingSide emri gerçekleşti! Karşı emir iptal edilip yeni ızgara kuruldu."
+                                    message = if (!isExplicitlyCancelled) "$missingSide emri gerçekleşti! Karşı emir iptal edilip yeni ızgara kuruldu."
                                               else "İptal edilen emir sonrası yeni ızgara kuruldu."
                                 )
                             )
@@ -998,13 +1179,13 @@ class BybitRepository(
 
                 return@withContext Result.success(
                     ReconciliationResult(
-                        executedOrderFound = !isCancelledWithoutFill,
-                        executedSide = if (!isCancelledWithoutFill) missingSide else null,
+                        executedOrderFound = !isExplicitlyCancelled,
+                        executedSide = if (!isExplicitlyCancelled) missingSide else null,
                         executedPrice = finalExecPrice,
-                        executedQty = execQty,
-                        executedOrderId = if (!isCancelledWithoutFill) execOrderId else "",
+                        executedQty = verifiedExecQty,
+                        executedOrderId = if (!isExplicitlyCancelled) execOrderId else "",
                         newBasePrice = finalExecPrice,
-                        message = if (!isCancelledWithoutFill) "$missingSide emri gerçekleşti." else "İptal tespit edildi."
+                        message = if (!isExplicitlyCancelled) "$missingSide emri gerçekleşti." else "İptal tespit edildi."
                     )
                 )
             }
@@ -1082,6 +1263,9 @@ class BybitRepository(
                 if (usdt > 0.0 && mnt > 0.0) {
                     val info = getInstrumentInfo(preferences.bybitSymbol)
                     val (qtyPrec, pricePrec) = getPrecisionForSymbol(preferences.bybitSymbol)
+                    val minAmt = info?.lotSizeFilter?.minOrderAmt?.toDoubleOrNull() ?: 5.0
+                    val minQty = info?.lotSizeFilter?.minOrderQty?.toDoubleOrNull()
+                    val maxQty = info?.lotSizeFilter?.maxOrderQty?.toDoubleOrNull()
                     val plan = RebalanceEngine.calculateGridOrders(
                             usdtBalance = usdt,
                             baseCoinBalance = mnt,
@@ -1090,11 +1274,15 @@ class BybitRepository(
                             qtyPrecision = qtyPrec,
                             pricePrecision = pricePrec,
                             tickSize = info?.priceFilter?.tickSize,
-                            lotStep = info?.lotSizeFilter?.basePrecision
+                            lotStep = info?.lotSizeFilter?.basePrecision,
+                            minOrderAmt = minAmt,
+                            minOrderQty = minQty,
+                            maxOrderQty = maxQty
                         )
                         if (plan.isValid) {
-                            val sellRes = createOrder("Sell", "Limit", plan.sellBaseQty, plan.sellLimitPrice, "GridStepUpSell")
-                            val buyRes = createOrder("Buy", "Limit", plan.buyBaseQty, plan.buyLimitPrice, "GridStepDownBuy")
+                            val cycleNow = System.currentTimeMillis()
+                            val sellRes = createOrder("Sell", "Limit", plan.sellBaseQty, plan.sellLimitPrice, "GridStepUpSell", customOrderLinkId = "grid_${cycleNow}_s")
+                            val buyRes = createOrder("Buy", "Limit", plan.buyBaseQty, plan.buyLimitPrice, "GridStepDownBuy", customOrderLinkId = "grid_${cycleNow}_b")
 
                             if (sellRes.isSuccess && buyRes.isSuccess) {
                                 val sid = sellRes.getOrNull().orEmpty()
@@ -1248,6 +1436,9 @@ class BybitRepository(
                     // 3. Calculate grid with the EXACT new base price
                     val info = getInstrumentInfo(preferences.bybitSymbol)
                     val (qtyPrec, pricePrec) = getPrecisionForSymbol(preferences.bybitSymbol)
+                    val minAmt = info?.lotSizeFilter?.minOrderAmt?.toDoubleOrNull() ?: 5.0
+                    val minQty = info?.lotSizeFilter?.minOrderQty?.toDoubleOrNull()
+                    val maxQty = info?.lotSizeFilter?.maxOrderQty?.toDoubleOrNull()
                     val plan = RebalanceEngine.calculateGridOrders(
                         usdtBalance = usdt,
                         baseCoinBalance = mnt,
@@ -1256,7 +1447,10 @@ class BybitRepository(
                         qtyPrecision = qtyPrec,
                         pricePrecision = pricePrec,
                         tickSize = info?.priceFilter?.tickSize,
-                        lotStep = info?.lotSizeFilter?.basePrecision
+                        lotStep = info?.lotSizeFilter?.basePrecision,
+                        minOrderAmt = minAmt,
+                        minOrderQty = minQty,
+                        maxOrderQty = maxQty
                     )
 
                     if (!plan.isValid) {
@@ -1680,6 +1874,10 @@ class BybitRepository(
         triggerReason: String = "",
         fillTime: Long = System.currentTimeMillis()
     ) = withContext(Dispatchers.IO) {
+        if (price <= 0.0 || qty <= 0.0) {
+            log(LogLevel.WARN, "BybitOrderFill", "Dolum kaydı reddedildi: Geçersiz fiyat ($price) veya miktar ($qty) ($orderId)")
+            return@withContext
+        }
         try {
             database.withTransaction {
                 val effectiveTime = if (fillTime > 0L) fillTime else System.currentTimeMillis()

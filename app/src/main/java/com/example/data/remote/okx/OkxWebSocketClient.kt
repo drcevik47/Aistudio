@@ -66,10 +66,20 @@ class OkxWebSocketClient(
     )
     val connectionStatus: SharedFlow<Pair<Boolean, String>> = _connectionStatus
 
+    private val _reconnectedEvents = MutableSharedFlow<Unit>(
+        replay = 0,
+        extraBufferCapacity = 8
+    )
+    val reconnectedEvents: SharedFlow<Unit> = _reconnectedEvents
+
     @Volatile
     private var isIntentionalDisconnect = false
     @Volatile
-    private var lastActivityTimeMs = 0L
+    private var lastPublicActivityTimeMs = 0L
+    @Volatile
+    private var lastPrivateActivityTimeMs = 0L
+    @Volatile
+    private var isReconnecting = false
     private var isRunning = false
     private var reconnectJob: Job? = null
     private var reconnectAttempts = 0
@@ -136,8 +146,7 @@ class OkxWebSocketClient(
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 if (webSocket !== publicWs) return
                 Log.d("OkxWS", "Public WS Connected, subscribing to tickers: $activeSymbol")
-                reconnectAttempts = 0
-                lastActivityTimeMs = System.currentTimeMillis()
+                lastPublicActivityTimeMs = System.currentTimeMillis()
                 val subMsg = JSONObject().apply {
                     put("op", "subscribe")
                     put("args", JSONArray().apply {
@@ -148,11 +157,19 @@ class OkxWebSocketClient(
                     })
                 }
                 webSocket.send(subMsg.toString())
+
+                if (apiKey.isBlank() || apiSecret.isBlank() || passphrase.isBlank()) {
+                    if (isReconnecting) {
+                        isReconnecting = false
+                        _reconnectedEvents.tryEmit(Unit)
+                    }
+                    reconnectAttempts = 0
+                }
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
                 if (webSocket !== publicWs) return
-                lastActivityTimeMs = System.currentTimeMillis()
+                lastPublicActivityTimeMs = System.currentTimeMillis()
                 try {
                     if (text == "pong") return
                     val json = JSONObject(text)
@@ -192,6 +209,7 @@ class OkxWebSocketClient(
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 if (webSocket !== privateWs) return
                 Log.d("OkxWS", "Private WS Connected, authenticating...")
+                lastPrivateActivityTimeMs = System.currentTimeMillis()
                 val timestamp = (System.currentTimeMillis() / 1000).toString()
                 val signMessage = timestamp + "GET" + "/users/self/verify"
                 val signature = generateSignature(apiSecret, signMessage)
@@ -212,7 +230,7 @@ class OkxWebSocketClient(
 
             override fun onMessage(webSocket: WebSocket, text: String) {
                 if (webSocket !== privateWs) return
-                lastActivityTimeMs = System.currentTimeMillis()
+                lastPrivateActivityTimeMs = System.currentTimeMillis()
                 try {
                     if (text == "pong") return
                     val json = JSONObject(text)
@@ -223,6 +241,11 @@ class OkxWebSocketClient(
                         if (code == "0") {
                             Log.d("OkxWS", "Private WS Authenticated successfully! Subscribing to orders...")
                             _connectionStatus.tryEmit(Pair(true, "OKX Özel hesap veri akışı aktif"))
+                            if (isReconnecting) {
+                                isReconnecting = false
+                                _reconnectedEvents.tryEmit(Unit)
+                            }
+                            reconnectAttempts = 0
                             
                             val subMsg = JSONObject().apply {
                                 put("op", "subscribe")
@@ -298,12 +321,18 @@ class OkxWebSocketClient(
                     val privSent = if (privateWs != null) (privateWs?.send("ping") ?: false) else true
 
                     val now = System.currentTimeMillis()
-                    val isZombie = (lastActivityTimeMs > 0 && (now - lastActivityTimeMs > 45_000L)) ||
-                            (!pubSent && publicWs != null) ||
-                            (!privSent && privateWs != null)
+                    val isPublicZombie = publicWs != null && (
+                        !pubSent || (lastPublicActivityTimeMs > 0 && (now - lastPublicActivityTimeMs > 40_000L))
+                    )
+                    val isPrivateZombie = privateWs != null && (
+                        !privSent || (lastPrivateActivityTimeMs > 0 && (now - lastPrivateActivityTimeMs > 40_000L))
+                    )
 
-                    if (isZombie) {
-                        Log.w("OkxWS", "Zombie or dead socket detected (no activity for ${now - lastActivityTimeMs}ms or ping send failed). Reconnecting...")
+                    if (isPublicZombie || isPrivateZombie) {
+                        Log.w(
+                            "OkxWS",
+                            "Zombie/dead socket detected (PublicZombie=$isPublicZombie, PrivateZombie=$isPrivateZombie). Reconnecting..."
+                        )
                         scheduleReconnect()
                     }
                 } catch (e: Exception) {
@@ -316,13 +345,17 @@ class OkxWebSocketClient(
     private fun scheduleReconnect() {
         if (!isRunning || isIntentionalDisconnect) return
         if (reconnectJob?.isActive == true) return
+        isReconnecting = true
         reconnectJob = scope.launch(Dispatchers.IO) {
-            val backoffMs = (2000L * Math.pow(1.5, reconnectAttempts.coerceAtMost(8).toDouble()).toLong())
-                .coerceIn(2000L, 30_000L)
+            val baseDelay = (1500L * Math.pow(2.0, reconnectAttempts.coerceAtMost(5).toDouble()).toLong())
+                .coerceIn(1500L, 30_000L)
+            val jitter = (0..500).random().toLong()
+            val totalDelay = baseDelay + jitter
             reconnectAttempts++
-            delay(backoffMs)
+            Log.d("OkxWS", "OKX WS reconnect scheduled in ${totalDelay}ms (attempt $reconnectAttempts)...")
+            delay(totalDelay)
             if (isRunning && !isIntentionalDisconnect) {
-                Log.d("OkxWS", "Reconnecting OKX WebSockets (attempt $reconnectAttempts after ${backoffMs}ms)...")
+                Log.d("OkxWS", "Executing OKX WebSocket reconnect...")
                 disconnectInternal()
                 startPublicWs()
                 if (apiKey.isNotBlank() && apiSecret.isNotBlank() && passphrase.isNotBlank()) {
@@ -337,6 +370,7 @@ class OkxWebSocketClient(
         scope.launch(Dispatchers.IO) {
             Log.d("OkxWS", "Forced reconnectNow requested...")
             reconnectJob?.cancel()
+            isReconnecting = true
             reconnectAttempts = 0
             disconnectInternal()
             startPublicWs()

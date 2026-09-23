@@ -113,6 +113,34 @@ class TradingBotService : Service() {
                 handleOkxOrderUpdate(order)
             }
         }
+        serviceScope.launch {
+            wsClient.reconnectedEvents.collect {
+                if (preferences.isBotActive) {
+                    Log.i("TradingBotService", "Bybit WS yeniden bağlandı -> Durum eşitlemesi (State Reconciliation) başlatılıyor...")
+                    repository.log(LogLevel.INFO, "BotService", "Bybit WS yeniden bağlandı. Kaçan emirler mutabakat ile eşitleniyor...")
+                    repository.reconcileGridOrders(callerTag = "BybitWS-Reconnect")
+                    repository.getWalletBalance().onSuccess { balances ->
+                        lastUsdtBalance = balances["USDT"]?.quantity ?: 0.0
+                        lastBaseBalance = balances["${preferences.bybitBaseCoin}"]?.quantity ?: 0.0
+                        updateNotification()
+                    }
+                }
+            }
+        }
+        serviceScope.launch {
+            okxWsClient.reconnectedEvents.collect {
+                if (preferences.isOkxBotActive) {
+                    Log.i("TradingBotService", "OKX WS yeniden bağlandı -> Durum eşitlemesi başlatılıyor...")
+                    repository.log(LogLevel.INFO, "BotService", "OKX WS yeniden bağlandı. Kaçan emirler mutabakat ile eşitleniyor...")
+                    okxRepository.reconcileGridOrders(callerTag = "OkxWS-Reconnect")
+                    okxRepository.getWalletBalance().onSuccess { balances ->
+                        lastOkxUsdtBalance = balances["USDT"]?.quantity ?: 0.0
+                        lastOkxBaseBalance = balances[preferences.okxBaseCoin]?.quantity ?: 0.0
+                        updateNotification()
+                    }
+                }
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -255,6 +283,12 @@ class TradingBotService : Service() {
                 try {
                     // --- BYBIT RECONCILIATION ---
                     if (preferences.isBotActive) {
+                        // Proactive WS liveness check: if bot is active but WS client is disconnected, force reconnect
+                        if (!wsClient.isConnected) {
+                            Log.w("Watchdog", "Bybit WS bağlantısı kopmuş tespit edildi, reconnectNow tetikleniyor...")
+                            wsClient.reconnectNow()
+                        }
+
                         val bybitReconcileInterval = if (wsClient.isPrivateConnected) 30_000L else 12_000L
 
                         // 1. Ticker fallback if WS didn't push price recently or on startup
@@ -284,6 +318,12 @@ class TradingBotService : Service() {
 
                     // --- OKX RECONCILIATION ---
                     if (preferences.isOkxBotActive) {
+                        // Proactive WS liveness check: if OKX bot is active but WS client is disconnected, force reconnect
+                        if (!okxWsClient.isConnected) {
+                            Log.w("Watchdog", "OKX WS bağlantısı kopmuş tespit edildi, reconnectNow tetikleniyor...")
+                            okxWsClient.reconnectNow()
+                        }
+
                         val okxReconcileInterval = if (okxWsClient.isConnected) 30_000L else 12_000L
 
                         // 1. Ticker fallback if WS didn't push price recently or on startup
@@ -326,8 +366,12 @@ class TradingBotService : Service() {
 
     private suspend fun handleOkxOrderUpdate(order: com.example.data.remote.okx.model.OkxOrderDetails) {
         if (preferences.isOkxBotActive && order.state.equals("filled", ignoreCase = true)) {
-            val fillPrice = order.avgPx.toDoubleOrNull() ?: order.px.toDoubleOrNull() ?: 0.0
-            val fillQty = order.accFillSz.toDoubleOrNull() ?: order.sz.toDoubleOrNull() ?: 0.0
+            val fillPrice = order.avgPx.toDoubleOrNull()?.takeIf { it > 0.0 } ?: order.px.toDoubleOrNull()?.takeIf { it > 0.0 } ?: 0.0
+            val fillQty = order.accFillSz.toDoubleOrNull()?.takeIf { it > 0.0 } ?: order.sz.toDoubleOrNull()?.takeIf { it > 0.0 } ?: 0.0
+            if (fillPrice <= 0.0 || fillQty <= 0.0) {
+                Log.w("BotService", "OKX Filled event yok sayıldı: Fiyat ($fillPrice) veya miktar ($fillQty) geçersiz")
+                return
+            }
             val fillTime = order.uTime.toLongOrNull() ?: System.currentTimeMillis()
             
             okxRepository.recordOrderFilled(
@@ -362,10 +406,18 @@ class TradingBotService : Service() {
     private suspend fun handleOrderUpdate(order: BybitOrderDto) {
         if (order.orderStatus.equals("Filled", ignoreCase = true)) {
             val orderId = order.orderId
+            val execQty = order.cumExecQty.toDoubleOrNull() ?: 0.0
+            if (execQty <= 0.0) {
+                Log.w("BotService", "Bybit Filled event yok sayıldı: cumExecQty ($execQty) 0 veya geçersiz")
+                return
+            }
             val avgPrice = order.avgPrice.toDoubleOrNull() ?: 0.0
             val fillPrice = if (avgPrice > 0.0) avgPrice else (order.priceValue)
-            val execQty = order.cumExecQty.toDoubleOrNull() ?: 0.0
-            val fillQty = if (execQty > 0.0) execQty else order.qtyValue
+            if (fillPrice <= 0.0) {
+                Log.w("BotService", "Bybit Filled event yok sayıldı: fillPrice ($fillPrice) 0 veya geçersiz")
+                return
+            }
+            val fillQty = execQty
 
             repository.recordOrderFilled(
                 orderId = orderId,

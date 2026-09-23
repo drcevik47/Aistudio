@@ -24,6 +24,7 @@ object BybitSigner {
     }
 
     private fun hmacSha256(data: String, key: String): String {
+        require(key.isNotBlank()) { "Bybit API Secret boş olamaz (Fail-closed)" }
         return try {
             val sha256Hmac = Mac.getInstance("HmacSHA256")
             val secretKey = SecretKeySpec(key.toByteArray(Charsets.UTF_8), "HmacSHA256")
@@ -32,7 +33,7 @@ object BybitSigner {
             bytesToHex(bytes)
         } catch (e: Exception) {
             Log.e("BybitSigner", "HMAC-SHA256 signing failed: ${e.message}", e)
-            ""
+            throw IllegalStateException("HMAC-SHA256 imzalama başarısız oldu (Fail-closed): ${e.message}", e)
         }
     }
 
