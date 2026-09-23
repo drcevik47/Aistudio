@@ -68,6 +68,8 @@ class OkxWebSocketClient(
 
     @Volatile
     private var isIntentionalDisconnect = false
+    @Volatile
+    private var lastActivityTimeMs = 0L
     private var isRunning = false
     private var reconnectJob: Job? = null
     private var reconnectAttempts = 0
@@ -134,6 +136,8 @@ class OkxWebSocketClient(
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 if (webSocket !== publicWs) return
                 Log.d("OkxWS", "Public WS Connected, subscribing to tickers: $activeSymbol")
+                reconnectAttempts = 0
+                lastActivityTimeMs = System.currentTimeMillis()
                 val subMsg = JSONObject().apply {
                     put("op", "subscribe")
                     put("args", JSONArray().apply {
@@ -148,6 +152,7 @@ class OkxWebSocketClient(
 
             override fun onMessage(webSocket: WebSocket, text: String) {
                 if (webSocket !== publicWs) return
+                lastActivityTimeMs = System.currentTimeMillis()
                 try {
                     if (text == "pong") return
                     val json = JSONObject(text)
@@ -207,6 +212,7 @@ class OkxWebSocketClient(
 
             override fun onMessage(webSocket: WebSocket, text: String) {
                 if (webSocket !== privateWs) return
+                lastActivityTimeMs = System.currentTimeMillis()
                 try {
                     if (text == "pong") return
                     val json = JSONObject(text)
@@ -288,10 +294,20 @@ class OkxWebSocketClient(
             while (isActive && isRunning) {
                 delay(15000)
                 try {
-                    publicWs?.send("ping")
-                    privateWs?.send("ping")
+                    val pubSent = publicWs?.send("ping") ?: false
+                    val privSent = if (privateWs != null) (privateWs?.send("ping") ?: false) else true
+
+                    val now = System.currentTimeMillis()
+                    val isZombie = (lastActivityTimeMs > 0 && (now - lastActivityTimeMs > 45_000L)) ||
+                            (!pubSent && publicWs != null) ||
+                            (!privSent && privateWs != null)
+
+                    if (isZombie) {
+                        Log.w("OkxWS", "Zombie or dead socket detected (no activity for ${now - lastActivityTimeMs}ms or ping send failed). Reconnecting...")
+                        scheduleReconnect()
+                    }
                 } catch (e: Exception) {
-                    // Ignore ping failures
+                    scheduleReconnect()
                 }
             }
         }
@@ -301,16 +317,31 @@ class OkxWebSocketClient(
         if (!isRunning || isIntentionalDisconnect) return
         if (reconnectJob?.isActive == true) return
         reconnectJob = scope.launch(Dispatchers.IO) {
-            val backoffMs = (reconnectAttempts * 2000L).coerceIn(2000L, 8000L)
+            val backoffMs = (2000L * Math.pow(1.5, reconnectAttempts.coerceAtMost(8).toDouble()).toLong())
+                .coerceIn(2000L, 30_000L)
             reconnectAttempts++
             delay(backoffMs)
             if (isRunning && !isIntentionalDisconnect) {
-                Log.d("OkxWS", "Reconnecting OKX WebSockets (attempt $reconnectAttempts)...")
+                Log.d("OkxWS", "Reconnecting OKX WebSockets (attempt $reconnectAttempts after ${backoffMs}ms)...")
                 disconnectInternal()
                 startPublicWs()
                 if (apiKey.isNotBlank() && apiSecret.isNotBlank() && passphrase.isNotBlank()) {
                     startPrivateWs()
                 }
+            }
+        }
+    }
+
+    fun reconnectNow() {
+        if (!isRunning || isIntentionalDisconnect) return
+        scope.launch(Dispatchers.IO) {
+            Log.d("OkxWS", "Forced reconnectNow requested...")
+            reconnectJob?.cancel()
+            reconnectAttempts = 0
+            disconnectInternal()
+            startPublicWs()
+            if (apiKey.isNotBlank() && apiSecret.isNotBlank() && passphrase.isNotBlank()) {
+                startPrivateWs()
             }
         }
     }

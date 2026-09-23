@@ -9,7 +9,10 @@ import androidx.security.crypto.MasterKey
 class BotPreferences(context: Context) {
     private val standardPrefs: SharedPreferences = context.getSharedPreferences("bybit_bot_prefs", Context.MODE_PRIVATE)
 
-    private val securePrefs: SharedPreferences = try {
+    val isSecureStorageAvailable: Boolean
+        get() = securePrefs != null
+
+    private val securePrefs: SharedPreferences? = try {
         val masterKey = MasterKey.Builder(context)
             .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
             .build()
@@ -21,14 +24,15 @@ class BotPreferences(context: Context) {
             EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
         )
     } catch (e: Exception) {
-        Log.e("BotPreferences", "EncryptedSharedPreferences creation failed, fallback to standard: ${e.message}")
-        standardPrefs
+        Log.e("BotPreferences", "EncryptedSharedPreferences oluşturulamadı. Güvenlik gereği şifresiz düz metin saklama engellendi: ${e.message}")
+        null
     }
 
     init {
-        // Automatically migrate legacy plaintext credentials from standardPrefs to securePrefs
+        // Automatically migrate legacy plaintext credentials from standardPrefs to securePrefs if available
         try {
-            if (securePrefs !== standardPrefs) {
+            val sp = securePrefs
+            if (sp != null) {
                 val legacyKeys = listOf(
                     KEY_API_KEY,
                     KEY_API_SECRET,
@@ -37,13 +41,13 @@ class BotPreferences(context: Context) {
                     KEY_OKX_API_PASSPHRASE
                 )
                 var needsMigration = false
-                val secureEditor = securePrefs.edit()
+                val secureEditor = sp.edit()
                 val standardEditor = standardPrefs.edit()
 
                 for (key in legacyKeys) {
                     val oldVal = standardPrefs.getString(key, null)
                     if (!oldVal.isNullOrBlank()) {
-                        if (securePrefs.getString(key, null).isNullOrBlank()) {
+                        if (sp.getString(key, null).isNullOrBlank()) {
                             secureEditor.putString(key, oldVal)
                             needsMigration = true
                         }
@@ -65,24 +69,39 @@ class BotPreferences(context: Context) {
         get() = standardPrefs
 
     var apiKey: String
-        get() = securePrefs.getString(KEY_API_KEY, "") ?: ""
-        set(value) = securePrefs.edit().putString(KEY_API_KEY, value.trim()).apply()
+        get() = securePrefs?.getString(KEY_API_KEY, "") ?: ""
+        set(value) {
+            securePrefs?.edit()?.putString(KEY_API_KEY, value.trim())?.apply()
+                ?: Log.e("BotPreferences", "GÜVENLİK: Şifreli depolama mevcut değil, apiKey kaydedilmedi.")
+        }
 
     var apiSecret: String
-        get() = securePrefs.getString(KEY_API_SECRET, "") ?: ""
-        set(value) = securePrefs.edit().putString(KEY_API_SECRET, value.trim()).apply()
+        get() = securePrefs?.getString(KEY_API_SECRET, "") ?: ""
+        set(value) {
+            securePrefs?.edit()?.putString(KEY_API_SECRET, value.trim())?.apply()
+                ?: Log.e("BotPreferences", "GÜVENLİK: Şifreli depolama mevcut değil, apiSecret kaydedilmedi.")
+        }
 
     var okxApiKey: String
-        get() = securePrefs.getString(KEY_OKX_API_KEY, "") ?: ""
-        set(value) = securePrefs.edit().putString(KEY_OKX_API_KEY, value.trim()).apply()
+        get() = securePrefs?.getString(KEY_OKX_API_KEY, "") ?: ""
+        set(value) {
+            securePrefs?.edit()?.putString(KEY_OKX_API_KEY, value.trim())?.apply()
+                ?: Log.e("BotPreferences", "GÜVENLİK: Şifreli depolama mevcut değil, okxApiKey kaydedilmedi.")
+        }
 
     var okxApiSecret: String
-        get() = securePrefs.getString(KEY_OKX_API_SECRET, "") ?: ""
-        set(value) = securePrefs.edit().putString(KEY_OKX_API_SECRET, value.trim()).apply()
+        get() = securePrefs?.getString(KEY_OKX_API_SECRET, "") ?: ""
+        set(value) {
+            securePrefs?.edit()?.putString(KEY_OKX_API_SECRET, value.trim())?.apply()
+                ?: Log.e("BotPreferences", "GÜVENLİK: Şifreli depolama mevcut değil, okxApiSecret kaydedilmedi.")
+        }
 
     var okxApiPassphrase: String
-        get() = securePrefs.getString(KEY_OKX_API_PASSPHRASE, "") ?: ""
-        set(value) = securePrefs.edit().putString(KEY_OKX_API_PASSPHRASE, value.trim()).apply()
+        get() = securePrefs?.getString(KEY_OKX_API_PASSPHRASE, "") ?: ""
+        set(value) {
+            securePrefs?.edit()?.putString(KEY_OKX_API_PASSPHRASE, value.trim())?.apply()
+                ?: Log.e("BotPreferences", "GÜVENLİK: Şifreli depolama mevcut değil, okxApiPassphrase kaydedilmedi.")
+        }
 
     var bybitSymbol: String
         get() = prefs.getString(KEY_BYBIT_SYMBOL, "MNTUSDT") ?: "MNTUSDT"
@@ -169,7 +188,12 @@ class BotPreferences(context: Context) {
         }
 
     fun saveCredentials(key: String, secret: String, testnet: Boolean) {
-        securePrefs.edit()
+        val sp = securePrefs
+        if (sp == null) {
+            Log.e("BotPreferences", "GÜVENLİK HATASI: Şifreli depolama mevcut değil, kimlik bilgileri kaydedilemez.")
+            return
+        }
+        sp.edit()
             .putString(KEY_API_KEY, key.trim())
             .putString(KEY_API_SECRET, secret.trim())
             .apply()
@@ -182,10 +206,10 @@ class BotPreferences(context: Context) {
     }
 
     fun clearCredentials() {
-        securePrefs.edit()
-            .remove(KEY_API_KEY)
-            .remove(KEY_API_SECRET)
-            .apply()
+        securePrefs?.edit()
+            ?.remove(KEY_API_KEY)
+            ?.remove(KEY_API_SECRET)
+            ?.apply()
         prefs.edit()
             .remove(KEY_API_KEY)
             .remove(KEY_API_SECRET)

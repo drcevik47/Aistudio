@@ -143,13 +143,15 @@ class BybitRepository(
 
     private fun parseBybitErrorMessage(retCode: Int, retMsg: String): String {
         val hint = when (retCode) {
+            10002 -> "Zaman aşımı: Cihaz saati Bybit sunucusu ile senkronize değil"
             10003 -> "API Key veya Secret hatalı / geçersiz"
             10004 -> "API İmza doğrulaması başarısız (Parametreler veya secret uyuşmuyor)"
             10005, 33004 -> "Yetki hatası: API anahtarınızda 'Spot: Trade' (Alım-Satım) izni açık olmalıdır"
+            10006 -> "İstek sınırı aşıldı (Rate Limit): Borsa hız sınırı devrede, lütfen bekleyin"
+            10010 -> "IP adresi yetkilendirilmemiş (Bybit IP kısıtlaması)"
             170131 -> "Yetersiz bakiye: Emir için Unified cüzdanınızda yeterli USDT veya MNT yok"
             170140 -> "Emir tutarı çok küçük: Bybit MNT/USDT için minimum işlem tutarı 5 USDT'dir"
             170193 -> "Emir miktarı veya fiyatı Bybit sınırlarını aşıyor"
-            10002 -> "Zaman aşımı: Cihaz saati Bybit sunucusu ile senkronize değil"
             else -> ""
         }
         return if (hint.isNotBlank()) "Hata $retCode ($hint): $retMsg" else "Bybit Hata [$retCode]: $retMsg"
@@ -186,8 +188,12 @@ class BybitRepository(
      * Dynamically format order quantity based on exchange lotSizeFilter and precision so we never attempt to trade more than available balance.
      */
     fun formatMntQty(qty: Double, price: Double? = null, symbol: String = preferences.bybitSymbol): String {
-        val cachedPrecision = instrumentInfoCache[symbol]?.lotSizeFilter?.basePrecision?.let { com.example.bot.RebalanceEngine.stepToDecimals(it) }
-        val decimals = cachedPrecision ?: run {
+        val info = instrumentInfoCache[symbol]
+        val stepStr = info?.lotSizeFilter?.basePrecision
+        if (!stepStr.isNullOrBlank()) {
+            return com.example.bot.RebalanceEngine.formatWithStep(qty, stepStr, java.math.RoundingMode.FLOOR)
+        }
+        val decimals = run {
             val refPrice = price ?: preferences.lastRebalancePrice
             when {
                 refPrice >= 10000.0 -> 6
@@ -209,8 +215,12 @@ class BybitRepository(
      * Dynamically format price based on exchange priceFilter (tickSize).
      */
     fun formatPrice(price: Double, symbol: String = preferences.bybitSymbol): String {
-        val cachedPrecision = instrumentInfoCache[symbol]?.priceFilter?.tickSize?.let { com.example.bot.RebalanceEngine.stepToDecimals(it) }
-        val decimals = cachedPrecision ?: when {
+        val info = instrumentInfoCache[symbol]
+        val tickStr = info?.priceFilter?.tickSize
+        if (!tickStr.isNullOrBlank()) {
+            return com.example.bot.RebalanceEngine.formatWithStep(price, tickStr, java.math.RoundingMode.HALF_UP)
+        }
+        val decimals = when {
             price >= 1000.0 -> 2
             price >= 1.0 -> 4
             price >= 0.01 -> 6
@@ -223,7 +233,7 @@ class BybitRepository(
 
     suspend fun pruneLogs(
         maxAgeMillis: Long = 24 * 60 * 60 * 1000L, // 24 hours
-        maxLogsToKeep: Int = 10000
+        maxLogsToKeep: Int = 1000
     ) = withContext(Dispatchers.IO) {
         try {
             val cutoff = System.currentTimeMillis() - maxAgeMillis
@@ -720,20 +730,11 @@ class BybitRepository(
             val activeBuyId = preferences.activeBuyOrderId
             val activeSellId = preferences.activeSellOrderId
 
-            // Fetch recent order history and execution history from Bybit
-            val recentOrdersRes = getRecentOrdersList(limit = 15)
-            val recentOrders = recentOrdersRes.getOrDefault(emptyList())
-            val recentExecutionsRes = getRecentExecutionsList(limit = 15)
-            val recentExecutions = recentExecutionsRes.getOrDefault(emptyList())
-
             // CASE 1: Both Buy and Sell orders are open on Bybit
             if (openBuyOrder != null && openSellOrder != null) {
                 // Ensure tracked IDs match
                 if (activeBuyId != openBuyOrder.orderId) preferences.activeBuyOrderId = openBuyOrder.orderId
                 if (activeSellId != openSellOrder.orderId) preferences.activeSellOrderId = openSellOrder.orderId
-
-                // Make sure any stale past orders in DB are synced to Filled/Cancelled
-                syncUnfilledOrdersWithExchange()
 
                 return@withContext Result.success(
                     ReconciliationResult(
@@ -743,6 +744,12 @@ class BybitRepository(
                     )
                 )
             }
+
+            // Only fetch recent history when at least one grid order has executed or disappeared
+            val recentOrdersRes = getRecentOrdersList(limit = 15)
+            val recentOrders = recentOrdersRes.getOrDefault(emptyList())
+            val recentExecutionsRes = getRecentExecutionsList(limit = 15)
+            val recentExecutions = recentExecutionsRes.getOrDefault(emptyList())
 
             // CASE 2: Exactly ONE order is open on Bybit (The classic fill case: Sell filled while Buy remained, or vice versa)
             if ((openBuyOrder != null && openSellOrder == null) || (openBuyOrder == null && openSellOrder != null)) {
@@ -863,7 +870,12 @@ class BybitRepository(
 
                 // 1. Cancel opposite remaining order
                 log(LogLevel.INFO, callerTag, "Karşı açık emir (${remainingOrder.side} ${remainingOrder.orderId}) iptal ediliyor...")
-                cancelOrder(remainingOrder.orderId)
+                val cancelRes = cancelOrder(remainingOrder.orderId)
+                if (cancelRes.isFailure) {
+                    val cancelErr = cancelRes.exceptionOrNull()?.message ?: "İptal başarısız"
+                    log(LogLevel.ERROR, callerTag, "Karşı açık emir (${remainingOrder.orderId}) iptal EDİLEMEDİ: $cancelErr. Çifte emir yığılmasını önlemek için yeni ızgara açılması durduruldu.")
+                    return@withContext Result.failure(Exception("Karşı emir (${remainingOrder.orderId}) iptal edilemediği için yeni ızgara açılamaz: $cancelErr"))
+                }
                 orderDao.deleteOrder(remainingOrder.orderId)
 
                 // 2. Clear old active IDs
@@ -901,7 +913,7 @@ class BybitRepository(
                 }
 
                 if (usdt > 0.0 && mnt > 0.0 && finalExecPrice > 0.0) {
-                    getInstrumentInfo(preferences.bybitSymbol)
+                    val info = getInstrumentInfo(preferences.bybitSymbol)
                     val (qtyPrec, pricePrec) = getPrecisionForSymbol(preferences.bybitSymbol)
                     val plan = RebalanceEngine.calculateGridOrders(
                         usdtBalance = usdt,
@@ -909,7 +921,9 @@ class BybitRepository(
                         basePrice = finalExecPrice,
                         stepPercent = step,
                         qtyPrecision = qtyPrec,
-                        pricePrecision = pricePrec
+                        pricePrecision = pricePrec,
+                        tickSize = info?.priceFilter?.tickSize,
+                        lotStep = info?.lotSizeFilter?.basePrecision
                     )
 
                     if (plan.isValid) {
@@ -921,10 +935,6 @@ class BybitRepository(
                             price = plan.sellLimitPrice,
                             triggerReason = "GridStepUpSell"
                         )
-                        sellRes.onSuccess { sid ->
-                            preferences.activeSellOrderId = sid
-                            log(LogLevel.INFO, callerTag, "Yeni Satış Limit Emri açıldı: $sid @ ${plan.sellLimitPrice}")
-                        }
 
                         // Place new Limit Buy
                         val buyRes = createOrder(
@@ -934,31 +944,55 @@ class BybitRepository(
                             price = plan.buyLimitPrice,
                             triggerReason = "GridStepDownBuy"
                         )
-                        buyRes.onSuccess { bid ->
+
+                        if (sellRes.isSuccess && buyRes.isSuccess) {
+                            val sid = sellRes.getOrNull().orEmpty()
+                            val bid = buyRes.getOrNull().orEmpty()
+                            preferences.activeSellOrderId = sid
                             preferences.activeBuyOrderId = bid
-                            log(LogLevel.INFO, callerTag, "Yeni Alış Limit Emri açıldı: $bid @ ${plan.buyLimitPrice}")
-                        }
+                            lastGridOrderPlacedTimeMs = System.currentTimeMillis()
 
-                        lastGridOrderPlacedTimeMs = System.currentTimeMillis()
-
-                        log(
-                            LogLevel.SUCCESS,
-                            callerTag,
-                            "Yeni ızgara limit emirleri açıldı. Yeni Baz: $${RebalanceEngine.format4(finalExecPrice)}"
-                        )
-
-                        return@withContext Result.success(
-                            ReconciliationResult(
-                                executedOrderFound = !isCancelledWithoutFill,
-                                executedSide = if (!isCancelledWithoutFill) missingSide else null,
-                                executedPrice = finalExecPrice,
-                                executedQty = execQty,
-                                executedOrderId = if (!isCancelledWithoutFill) execOrderId else "",
-                                newBasePrice = finalExecPrice,
-                                message = if (!isCancelledWithoutFill) "$missingSide emri gerçekleşti! Karşı emir iptal edilip yeni ızgara kuruldu."
-                                          else "İptal edilen emir sonrası yeni ızgara kuruldu."
+                            log(LogLevel.INFO, callerTag, "Yeni Satış Limit Emri: $sid @ ${plan.sellLimitPrice}")
+                            log(LogLevel.INFO, callerTag, "Yeni Alış Limit Emri: $bid @ ${plan.buyLimitPrice}")
+                            log(
+                                LogLevel.SUCCESS,
+                                callerTag,
+                                "Yeni ızgara limit emirleri açıldı. Yeni Baz: $${RebalanceEngine.format4(finalExecPrice)}"
                             )
-                        )
+
+                            return@withContext Result.success(
+                                ReconciliationResult(
+                                    executedOrderFound = !isCancelledWithoutFill,
+                                    executedSide = if (!isCancelledWithoutFill) missingSide else null,
+                                    executedPrice = finalExecPrice,
+                                    executedQty = execQty,
+                                    executedOrderId = if (!isCancelledWithoutFill) execOrderId else "",
+                                    newBasePrice = finalExecPrice,
+                                    message = if (!isCancelledWithoutFill) "$missingSide emri gerçekleşti! Karşı emir iptal edilip yeni ızgara kuruldu."
+                                              else "İptal edilen emir sonrası yeni ızgara kuruldu."
+                                )
+                            )
+                        } else {
+                            // ASYMMETRIC FAILURE GUARD / ROLLBACK:
+                            // Never leave a single open order stranded, otherwise next cycle assumes the other side was filled!
+                            val sid = sellRes.getOrNull().orEmpty()
+                            val bid = buyRes.getOrNull().orEmpty()
+                            if (sellRes.isSuccess && sid.isNotBlank()) {
+                                log(LogLevel.ERROR, callerTag, "Alış emri açılamadı (${buyRes.exceptionOrNull()?.message}). Açılan satış emri ($sid) geri alınıyor (rollback)...")
+                                cancelOrder(sid)
+                                orderDao.deleteOrder(sid)
+                            }
+                            if (buyRes.isSuccess && bid.isNotBlank()) {
+                                log(LogLevel.ERROR, callerTag, "Satış emri açılamadı (${sellRes.exceptionOrNull()?.message}). Açılan alış emri ($bid) geri alınıyor (rollback)...")
+                                cancelOrder(bid)
+                                orderDao.deleteOrder(bid)
+                            }
+                            preferences.activeSellOrderId = ""
+                            preferences.activeBuyOrderId = ""
+                            val errMsg = "Izgara tam açılamadı. Satış: ${sellRes.exceptionOrNull()?.message ?: "OK"}, Alış: ${buyRes.exceptionOrNull()?.message ?: "OK"}"
+                            log(LogLevel.ERROR, callerTag, errMsg)
+                            return@withContext Result.failure(Exception(errMsg))
+                        }
                     }
                 }
 
@@ -1046,7 +1080,7 @@ class BybitRepository(
                 }
 
                 if (usdt > 0.0 && mnt > 0.0) {
-                    getInstrumentInfo(preferences.bybitSymbol)
+                    val info = getInstrumentInfo(preferences.bybitSymbol)
                     val (qtyPrec, pricePrec) = getPrecisionForSymbol(preferences.bybitSymbol)
                     val plan = RebalanceEngine.calculateGridOrders(
                             usdtBalance = usdt,
@@ -1054,31 +1088,55 @@ class BybitRepository(
                             basePrice = basePrice,
                             stepPercent = preferences.stepPercent,
                             qtyPrecision = qtyPrec,
-                            pricePrecision = pricePrec
+                            pricePrecision = pricePrec,
+                            tickSize = info?.priceFilter?.tickSize,
+                            lotStep = info?.lotSizeFilter?.basePrecision
                         )
                         if (plan.isValid) {
                             val sellRes = createOrder("Sell", "Limit", plan.sellBaseQty, plan.sellLimitPrice, "GridStepUpSell")
-                            sellRes.onSuccess { preferences.activeSellOrderId = it }
-
                             val buyRes = createOrder("Buy", "Limit", plan.buyBaseQty, plan.buyLimitPrice, "GridStepDownBuy")
-                            buyRes.onSuccess { preferences.activeBuyOrderId = it }
 
-                            lastGridOrderPlacedTimeMs = System.currentTimeMillis()
+                            if (sellRes.isSuccess && buyRes.isSuccess) {
+                                val sid = sellRes.getOrNull().orEmpty()
+                                val bid = buyRes.getOrNull().orEmpty()
+                                preferences.activeSellOrderId = sid
+                                preferences.activeBuyOrderId = bid
+                                lastGridOrderPlacedTimeMs = System.currentTimeMillis()
 
-                            log(LogLevel.SUCCESS, callerTag, "Açık emir yoktu, yeni ızgara kuruldu (Baz: $${RebalanceEngine.format4(basePrice)})")
+                                log(LogLevel.SUCCESS, callerTag, "Açık emir yoktu, yeni ızgara kuruldu (Baz: $${RebalanceEngine.format4(basePrice)})")
 
-                            return@withContext Result.success(
-                                ReconciliationResult(
-                                    executedOrderFound = (latestFilled != null),
-                                    executedSide = latestSide.ifBlank { null },
-                                    executedPrice = basePrice,
-                                    executedQty = latestQty,
-                                    executedOrderId = latestId,
-                                    newBasePrice = basePrice,
-                                    message = if (latestFilled != null) "Açık emirler tamamlanmıştı, yeni ızgara açıldı."
-                                              else "Yeni ızgara açıldı."
+                                return@withContext Result.success(
+                                    ReconciliationResult(
+                                        executedOrderFound = (latestFilled != null),
+                                        executedSide = latestSide.ifBlank { null },
+                                        executedPrice = basePrice,
+                                        executedQty = latestQty,
+                                        executedOrderId = latestId,
+                                        newBasePrice = basePrice,
+                                        message = if (latestFilled != null) "Açık emirler tamamlanmıştı, yeni ızgara açıldı."
+                                                  else "Yeni ızgara açıldı."
+                                    )
                                 )
-                            )
+                            } else {
+                                // ASYMMETRIC FAILURE GUARD / ROLLBACK
+                                val sid = sellRes.getOrNull().orEmpty()
+                                val bid = buyRes.getOrNull().orEmpty()
+                                if (sellRes.isSuccess && sid.isNotBlank()) {
+                                    log(LogLevel.ERROR, callerTag, "Alış emri açılamadı (${buyRes.exceptionOrNull()?.message}). Açılan satış emri ($sid) geri alınıyor...")
+                                    cancelOrder(sid)
+                                    orderDao.deleteOrder(sid)
+                                }
+                                if (buyRes.isSuccess && bid.isNotBlank()) {
+                                    log(LogLevel.ERROR, callerTag, "Satış emri açılamadı (${sellRes.exceptionOrNull()?.message}). Açılan alış emri ($bid) geri alınıyor...")
+                                    cancelOrder(bid)
+                                    orderDao.deleteOrder(bid)
+                                }
+                                preferences.activeSellOrderId = ""
+                                preferences.activeBuyOrderId = ""
+                                val errMsg = "Izgara tam açılamadı. Satış: ${sellRes.exceptionOrNull()?.message ?: "OK"}, Alış: ${buyRes.exceptionOrNull()?.message ?: "OK"}"
+                                log(LogLevel.ERROR, callerTag, errMsg)
+                                return@withContext Result.failure(Exception(errMsg))
+                            }
                         }
                     }
                 }
@@ -1188,7 +1246,7 @@ class BybitRepository(
                     }
 
                     // 3. Calculate grid with the EXACT new base price
-                    getInstrumentInfo(preferences.bybitSymbol)
+                    val info = getInstrumentInfo(preferences.bybitSymbol)
                     val (qtyPrec, pricePrec) = getPrecisionForSymbol(preferences.bybitSymbol)
                     val plan = RebalanceEngine.calculateGridOrders(
                         usdtBalance = usdt,
@@ -1196,7 +1254,9 @@ class BybitRepository(
                         basePrice = newPrice,
                         stepPercent = preferences.stepPercent,
                         qtyPrecision = qtyPrec,
-                        pricePrecision = pricePrec
+                        pricePrecision = pricePrec,
+                        tickSize = info?.priceFilter?.tickSize,
+                        lotStep = info?.lotSizeFilter?.basePrecision
                     )
 
                     if (!plan.isValid) {
@@ -1654,10 +1714,7 @@ class BybitRepository(
             val alreadyInTrades = if (orderId.isNotBlank()) exchangeTradeDao.hasTradeForOrder(orderId) else false
             if (!alreadyInTrades) {
                 val execPrice = if (price > 0.0) price else existing?.price ?: preferences.lastRebalancePrice
-                var execQty = if (qty > 0.0) qty else existing?.qty ?: 0.0
-                if (execQty <= 0.0 && execPrice > 0.0) {
-                    execQty = 5.0 / execPrice
-                }
+                val execQty = if (qty > 0.0) qty else existing?.qty ?: 0.0
                 if (execPrice > 0.0 && execQty > 0.0) {
                     val execValue = execPrice * execQty
                     val execFee = execValue * 0.001

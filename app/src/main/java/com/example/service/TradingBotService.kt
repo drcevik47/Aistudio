@@ -8,6 +8,10 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
@@ -50,10 +54,15 @@ class TradingBotService : Service() {
     private var currentBasePrice: Double = 0.0
     private var lastUsdtBalance: Double = 0.0
     private var lastBaseBalance: Double = 0.0
+    private var lastBybitPriceUpdateMs: Long = 0L
 
     private var currentOkxBasePrice: Double = 0.0
     private var lastOkxUsdtBalance: Double = 0.0
     private var lastOkxBaseBalance: Double = 0.0
+    private var lastOkxPriceUpdateMs: Long = 0L
+
+    private var connectivityManager: ConnectivityManager? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -74,6 +83,7 @@ class TradingBotService : Service() {
         setupSocketListeners()
         createNotificationChannels()
         acquireWakeLock()
+        registerNetworkCallback()
     }
 
     private fun setupSocketListeners() {
@@ -81,6 +91,7 @@ class TradingBotService : Service() {
             wsClient.priceUpdates.collect { price ->
                 if (price > 0.0 && price != currentBasePrice) {
                     currentBasePrice = price
+                    lastBybitPriceUpdateMs = System.currentTimeMillis()
                 }
             }
         }
@@ -88,6 +99,7 @@ class TradingBotService : Service() {
             okxWsClient.priceUpdates.collect { price ->
                 if (price > 0.0 && price != currentOkxBasePrice) {
                     currentOkxBasePrice = price
+                    lastOkxPriceUpdateMs = System.currentTimeMillis()
                 }
             }
         }
@@ -233,52 +245,71 @@ class TradingBotService : Service() {
     private fun startWatchdogLoop() {
         pollingJob?.cancel()
         pollingJob = serviceScope.launch {
-            var cycleCount = 0
+            var lastBybitWatchdogReconcileMs = 0L
+            var lastOkxWatchdogReconcileMs = 0L
+            var lastBybitBalancePollMs = 0L
+            var lastOkxBalancePollMs = 0L
+
             while (isActive && isBotLoopRunning.get()) {
+                val now = System.currentTimeMillis()
                 try {
                     // --- BYBIT RECONCILIATION ---
                     if (preferences.isBotActive) {
-                        if (currentBasePrice <= 0.0 || cycleCount % 3 == 0) {
-                            val tickerRes = repository.getTicker()
-                            tickerRes.onSuccess { ticker ->
+                        val bybitReconcileInterval = if (wsClient.isPrivateConnected) 30_000L else 12_000L
+
+                        // 1. Ticker fallback if WS didn't push price recently or on startup
+                        if (currentBasePrice <= 0.0 || (now - lastBybitPriceUpdateMs > 30_000L)) {
+                            repository.getTicker().onSuccess { ticker ->
                                 currentBasePrice = ticker.currentPrice
+                                lastBybitPriceUpdateMs = now
                             }
                         }
 
-                        if (cycleCount % 3 == 0 || lastUsdtBalance <= 0.0) {
-                            val balanceRes = repository.getWalletBalance()
-                            balanceRes.onSuccess { balances ->
+                        // 2. Periodic balance sync
+                        if (lastUsdtBalance <= 0.0 || (now - lastBybitBalancePollMs > 30_000L)) {
+                            repository.getWalletBalance().onSuccess { balances ->
                                 lastUsdtBalance = balances["USDT"]?.quantity ?: 0.0
                                 lastBaseBalance = balances["${preferences.bybitBaseCoin}"]?.quantity ?: 0.0
+                                lastBybitBalancePollMs = now
                                 updateNotification()
                             }
                         }
 
-                        if (cycleCount % 3 == 0) {
+                        // 3. Watchdog reconcile
+                        if (now - lastBybitWatchdogReconcileMs >= bybitReconcileInterval) {
+                            lastBybitWatchdogReconcileMs = now
                             repository.reconcileGridOrders(callerTag = "Watchdog-Bybit")
                         }
                     }
 
                     // --- OKX RECONCILIATION ---
                     if (preferences.isOkxBotActive) {
-                        if (currentOkxBasePrice <= 0.0 || cycleCount % 3 == 0) {
-                            val okxTickerRes = okxRepository.getTicker()
-                            okxTickerRes.onSuccess { ticker ->
+                        val okxReconcileInterval = if (okxWsClient.isConnected) 30_000L else 12_000L
+
+                        // 1. Ticker fallback if WS didn't push price recently or on startup
+                        if (currentOkxBasePrice <= 0.0 || (now - lastOkxPriceUpdateMs > 30_000L)) {
+                            okxRepository.getTicker().onSuccess { ticker ->
                                 val p = ticker.last.toDoubleOrNull() ?: 0.0
-                                if (p > 0.0) currentOkxBasePrice = p
+                                if (p > 0.0) {
+                                    currentOkxBasePrice = p
+                                    lastOkxPriceUpdateMs = now
+                                }
                             }
                         }
 
-                        if (cycleCount % 3 == 0 || lastOkxUsdtBalance <= 0.0) {
-                            val okxBalRes = okxRepository.getWalletBalance()
-                            okxBalRes.onSuccess { balances ->
+                        // 2. Periodic balance sync
+                        if (lastOkxUsdtBalance <= 0.0 || (now - lastOkxBalancePollMs > 30_000L)) {
+                            okxRepository.getWalletBalance().onSuccess { balances ->
                                 lastOkxUsdtBalance = balances["USDT"]?.quantity ?: 0.0
                                 lastOkxBaseBalance = balances[preferences.okxBaseCoin]?.quantity ?: 0.0
+                                lastOkxBalancePollMs = now
                                 updateNotification()
                             }
                         }
 
-                        if (cycleCount % 3 == 0) {
+                        // 3. Watchdog reconcile
+                        if (now - lastOkxWatchdogReconcileMs >= okxReconcileInterval) {
+                            lastOkxWatchdogReconcileMs = now
                             okxRepository.reconcileGridOrders(callerTag = "Watchdog-OKX")
                         }
                     }
@@ -288,8 +319,7 @@ class TradingBotService : Service() {
                 } catch (e: Exception) {
                     Log.e("Watchdog", "Error in watchdog loop", e)
                 }
-                cycleCount++
-                delay(4000)
+                delay(5000)
             }
         }
     }
@@ -310,6 +340,14 @@ class TradingBotService : Service() {
             )
             
             okxRepository.reconcileGridOrders(callerTag = "OkxWebSocket", triggeringFilledOrder = order)
+
+            serviceScope.launch {
+                okxRepository.getWalletBalance().onSuccess { balances ->
+                    lastOkxUsdtBalance = balances["USDT"]?.quantity ?: 0.0
+                    lastOkxBaseBalance = balances[preferences.okxBaseCoin]?.quantity ?: 0.0
+                    updateNotification()
+                }
+            }
             
             val notifId = ALERT_NOTIFICATION_ID_BASE + 500 + (order.ordId.hashCode() and 0x3FFFFFFF) % 500
             sendAlertNotification(
@@ -338,6 +376,14 @@ class TradingBotService : Service() {
                 fillTime = order.updatedTime.toLongOrNull() ?: 0L
             )
             repository.reconcileGridOrders(callerTag = "WebSocket", triggeringFilledOrder = order)
+
+            serviceScope.launch {
+                repository.getWalletBalance().onSuccess { balances ->
+                    lastUsdtBalance = balances["USDT"]?.quantity ?: 0.0
+                    lastBaseBalance = balances["${preferences.bybitBaseCoin}"]?.quantity ?: 0.0
+                    updateNotification()
+                }
+            }
 
             val notifId = ALERT_NOTIFICATION_ID_BASE + (orderId.hashCode() and 0x7FFFFFFF) % 500
             sendAlertNotification(
@@ -518,7 +564,59 @@ class TradingBotService : Service() {
         }
     }
 
+    private fun registerNetworkCallback() {
+        try {
+            connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            val request = NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .build()
+
+            networkCallback = object : ConnectivityManager.NetworkCallback() {
+                private var wasLost = false
+
+                override fun onAvailable(network: Network) {
+                    if (wasLost) {
+                        Log.i("TradingBotService", "Ağ bağlantısı tekrar kuruldu. WebSocketler ve grid emirleri yenileniyor...")
+                        wasLost = false
+                        serviceScope.launch {
+                            repository.log(LogLevel.INFO, "BotService", "Ağ bağlantısı sağlandı, soketler yenileniyor...")
+                            if (preferences.isBotActive) {
+                                wsClient.reconnectNow()
+                                repository.reconcileGridOrders(callerTag = "NetworkRestored")
+                            }
+                            if (preferences.isOkxBotActive) {
+                                okxWsClient.reconnectNow()
+                                okxRepository.reconcileGridOrders(callerTag = "NetworkRestored")
+                            }
+                        }
+                    }
+                }
+
+                override fun onLost(network: Network) {
+                    wasLost = true
+                    Log.w("TradingBotService", "Ağ bağlantısı kesildi!")
+                    serviceScope.launch {
+                        repository.log(LogLevel.WARN, "BotService", "Ağ bağlantısı kesildi. Yeniden bağlanma bekleniyor...")
+                    }
+                }
+            }
+            networkCallback?.let { connectivityManager?.registerNetworkCallback(request, it) }
+        } catch (e: Exception) {
+            Log.e("TradingBotService", "NetworkCallback kaydı başarısız: ${e.message}")
+        }
+    }
+
+    private fun unregisterNetworkCallback() {
+        try {
+            networkCallback?.let { connectivityManager?.unregisterNetworkCallback(it) }
+            networkCallback = null
+        } catch (e: Exception) {
+            Log.w("TradingBotService", "NetworkCallback iptal hatası: ${e.message}")
+        }
+    }
+
     override fun onDestroy() {
+        unregisterNetworkCallback()
         stopBot()
         serviceScope.cancel()
         wakeLock?.let {

@@ -44,11 +44,8 @@ data class AssetBalance(val quantity: Double, val fiatValue: Double)
 
 data class MainUiState(
     val isConfigured: Boolean = false,
-    val apiKey: String = "",
-    val apiSecret: String = "",
-    val okxApiKey: String = "",
-    val okxApiSecret: String = "",
-    val okxApiPassphrase: String = "",
+    val hasBybitCredentials: Boolean = false,
+    val hasOkxCredentials: Boolean = false,
     val isTestnet: Boolean = false,
     val activeExchange: String = "BYBIT",
     val activeBaseCoin: String = "MNT",
@@ -124,11 +121,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _uiState = MutableStateFlow(
         MainUiState(
             isConfigured = preferences.isConfigured,
-            apiKey = preferences.apiKey,
-            apiSecret = preferences.apiSecret,
-            okxApiKey = preferences.okxApiKey,
-            okxApiSecret = preferences.okxApiSecret,
-            okxApiPassphrase = preferences.okxApiPassphrase,
+            hasBybitCredentials = preferences.isConfigured,
+            hasOkxCredentials = preferences.okxApiKey.isNotBlank(),
             activeExchange = preferences.activeExchange,
             activeBaseCoin = if (preferences.activeExchange == "OKX") preferences.okxBaseCoin else preferences.bybitBaseCoin,
             activeSymbol = if (preferences.activeExchange == "OKX") preferences.okxSymbol else preferences.bybitSymbol,
@@ -308,14 +302,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             _uiState.update { it.copy(isLoading = true, errorMessage = null) }
             preferences.okxApiKey = key
-            preferences.okxApiSecret = secret
-            preferences.okxApiPassphrase = passphrase
+            if (secret.isNotBlank()) preferences.okxApiSecret = secret
+            if (passphrase.isNotBlank()) preferences.okxApiPassphrase = passphrase
             repository.log(LogLevel.INFO, "Auth", "OKX TR API bilgileri kaydedildi")
             _uiState.update {
                 it.copy(
-                    okxApiKey = key,
-                    okxApiSecret = secret,
-                    okxApiPassphrase = passphrase,
+                    hasOkxCredentials = preferences.okxApiKey.isNotBlank(),
                     isLoading = false,
                     statusMessage = "OKX TR API bilgileri başarıyla kaydedildi"
                 )
@@ -326,13 +318,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun saveApiCredentials(key: String, secret: String, testnet: Boolean) {
         viewModelScope.launch(Dispatchers.IO) {
             _uiState.update { it.copy(isLoading = true, errorMessage = null) }
-            preferences.saveCredentials(key, secret, testnet)
+            val finalSecret = if (secret.isBlank()) preferences.apiSecret else secret
+            preferences.saveCredentials(key, finalSecret, testnet)
             repository.log(LogLevel.INFO, "Auth", "API bilgileri kaydedildi (Testnet: $testnet)")
             _uiState.update {
                 it.copy(
                     isConfigured = true,
-                    apiKey = key,
-                    apiSecret = secret,
+                    hasBybitCredentials = true,
                     isTestnet = testnet,
                     showApiKeyDialog = false
                 )
@@ -680,10 +672,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun startOkxBot() {
         viewModelScope.launch(Dispatchers.IO) {
             _uiState.update { it.copy(isLoading = true) }
+            preferences.isOkxBotActive = true
+            if (preferences.okxLastRebalancePrice <= 0.0 && _uiState.value.okxCurrentPrice > 0.0) {
+                preferences.okxLastRebalancePrice = _uiState.value.okxCurrentPrice
+            }
             val startRes = okxRepository.reconcileGridOrders(callerTag = "StartOkxBot")
             startRes.onSuccess {
-                preferences.isOkxBotActive = true
-                preferences.okxLastRebalancePrice = _uiState.value.okxCurrentPrice
                 // We restart the global service since it will now handle both loops if active
                 try {
                     com.example.service.TradingBotService.start(getApplication())
@@ -692,6 +686,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             startRes.onFailure { err ->
+                preferences.isOkxBotActive = false
                 _uiState.update { it.copy(errorMessage = "OKX Bot başlatılamadı: ${err.message}") }
             }
             fetchOkxData(0)
@@ -739,10 +734,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun startBot() {
         viewModelScope.launch(Dispatchers.IO) {
             _uiState.update { it.copy(isLoading = true) }
+            preferences.isBotActive = true
+            if (preferences.lastRebalancePrice <= 0.0 && _uiState.value.currentPrice > 0.0) {
+                preferences.lastRebalancePrice = _uiState.value.currentPrice
+            }
             val startRes = repository.reconcileGridOrders(callerTag = "StartBot")
             startRes.onSuccess {
-                preferences.isBotActive = true
-                preferences.lastRebalancePrice = _uiState.value.currentPrice
                 try {
                     TradingBotService.start(getApplication())
                 } catch (e: Exception) {
@@ -754,7 +751,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.update { it.copy(isBotActive = true, isLoading = false, lastRebalancePrice = preferences.lastRebalancePrice) }
                 refreshData()
             }.onFailure { err ->
-                _uiState.update { it.copy(isLoading = false, errorMessage = "Bot başlatılamadı: ${err.message}") }
+                preferences.isBotActive = false
+                _uiState.update { it.copy(isBotActive = false, isLoading = false, errorMessage = "Bot başlatılamadı: ${err.message}") }
             }
         }
     }

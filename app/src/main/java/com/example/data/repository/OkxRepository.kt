@@ -177,8 +177,11 @@ class OkxRepository(
     }
 
     fun formatQty(qty: Double, symbol: String = preferences.okxSymbol, price: Double? = null): String {
-        val cachedPrecision = okxInstrumentCache[symbol]?.lotSz?.let { com.example.bot.RebalanceEngine.stepToDecimals(it) }
-        val decimals = cachedPrecision ?: run {
+        val stepStr = okxInstrumentCache[symbol]?.lotSz
+        if (!stepStr.isNullOrBlank()) {
+            return com.example.bot.RebalanceEngine.formatWithStep(qty, stepStr, java.math.RoundingMode.FLOOR)
+        }
+        val decimals = run {
             val refPrice = price ?: preferences.okxLastRebalancePrice
             when {
                 refPrice >= 10000.0 -> 6
@@ -195,14 +198,31 @@ class OkxRepository(
     }
 
     fun formatPrice(price: Double, symbol: String = preferences.okxSymbol): String {
-        val cachedPrecision = okxInstrumentCache[symbol]?.tickSz?.let { com.example.bot.RebalanceEngine.stepToDecimals(it) }
-        val decimals = cachedPrecision ?: when {
+        val tickStr = okxInstrumentCache[symbol]?.tickSz
+        if (!tickStr.isNullOrBlank()) {
+            return com.example.bot.RebalanceEngine.formatWithStep(price, tickStr, java.math.RoundingMode.HALF_UP)
+        }
+        val decimals = when {
             price >= 1000.0 -> 2
             price >= 1.0 -> 4
             price >= 0.01 -> 6
             else -> 8
         }
         return String.format(java.util.Locale.US, "%.${decimals}f", price).trimEnd('0').trimEnd('.')
+    }
+
+    private fun parseOkxErrorMessage(code: String, msg: String): String {
+        val hint = when (code) {
+            "50004" -> "API anahtarı veya passphrase geçersiz"
+            "50011" -> "İstek sınırı aşıldı (Rate Limit): Lütfen bekleyin"
+            "50013" -> "Yetki hatası: API anahtarınızda Alım-Satım (Trade) izni açık olmalıdır"
+            "51000" -> "Parametre hatası: Miktar veya fiyat borsa kurallarına uymuyor"
+            "51001" -> "Zaman aşımı: Cihaz saati OKX sunucusu ile senkronize değil"
+            "51004" -> "Yetersiz bakiye: İşlem için yeterli USDT veya kripto varlık yok"
+            "51006" -> "Emir tutarı çok küçük: OKX minimum spot emir tutarını karşılamıyor"
+            else -> ""
+        }
+        return if (hint.isNotBlank()) "OKX Hata $code ($hint): $msg" else "OKX Hata [$code]: $msg"
     }
 
     suspend fun createOrder(
@@ -233,12 +253,14 @@ class OkxRepository(
                         log(LogLevel.INFO, "OKX_ORDER", "Emir iletildi (${side} $qty). OrderId: ${resData.ordId}")
                         Result.success(resData.ordId)
                     } else {
-                        log(LogLevel.ERROR, "OKX_ORDER", "Emir Hatası: ${resData.sCode} - ${resData.sMsg}")
-                        Result.failure(Exception("${resData.sCode} - ${resData.sMsg}"))
+                        val friendlyMsg = parseOkxErrorMessage(resData.sCode, resData.sMsg)
+                        log(LogLevel.ERROR, "OKX_ORDER", friendlyMsg)
+                        Result.failure(Exception(friendlyMsg))
                     }
                 } else {
-                    log(LogLevel.ERROR, "OKX_ORDER", "API Hatası: ${response.code} - ${response.msg}")
-                    Result.failure(Exception("${response.code} - ${response.msg}"))
+                    val friendlyMsg = parseOkxErrorMessage(response.code, response.msg)
+                    log(LogLevel.ERROR, "OKX_ORDER", friendlyMsg)
+                    Result.failure(Exception(friendlyMsg))
                 }
             } catch (e: Exception) {
                 log(LogLevel.ERROR, "OKX_ORDER", "Ağ Hatası: ${e.message}")
@@ -352,7 +374,12 @@ class OkxRepository(
                 )
 
                 log(LogLevel.INFO, callerTag, "OKX Karşı açık emir (${remainingOrder.side} ${remainingOrder.ordId}) iptal ediliyor...")
-                cancelOrder(remainingOrder.ordId)
+                val cancelRes = cancelOrder(remainingOrder.ordId)
+                if (cancelRes.isFailure) {
+                    val cancelErr = cancelRes.exceptionOrNull()?.message ?: "İptal başarısız"
+                    log(LogLevel.ERROR, callerTag, "OKX Karşı açık emir (${remainingOrder.ordId}) iptal EDİLEMEDİ: $cancelErr. Çifte emir oluşmaması için yeni ızgara açılması durduruldu.")
+                    return@withContext Result.failure(Exception("OKX Karşı emir (${remainingOrder.ordId}) iptal edilemediği için yeni ızgara açılamaz: $cancelErr"))
+                }
 
                 preferences.okxLastRebalancePrice = finalExecPrice
                 preferences.okxActiveBuyOrderId = ""
@@ -370,7 +397,7 @@ class OkxRepository(
 
             val basePrice = if (preferences.okxLastRebalancePrice > 0.0) preferences.okxLastRebalancePrice else currentPrice
 
-            getInstrumentInfo(preferences.okxSymbol)
+            val inst = getInstrumentInfo(preferences.okxSymbol)
             val (qtyPrec, pricePrec) = getPrecisionForSymbol(preferences.okxSymbol)
             val gridPlan = com.example.bot.RebalanceEngine.calculateGridOrders(
                 usdtBalance = usdtBalance,
@@ -378,7 +405,9 @@ class OkxRepository(
                 basePrice = basePrice,
                 stepPercent = preferences.okxStepPercent,
                 qtyPrecision = qtyPrec,
-                pricePrecision = pricePrec
+                pricePrecision = pricePrec,
+                tickSize = inst?.tickSz,
+                lotStep = inst?.lotSz
             )
 
             if (!gridPlan.isValid) {
@@ -392,8 +421,6 @@ class OkxRepository(
                 qty = gridPlan.sellBaseQty,
                 price = gridPlan.sellLimitPrice
             )
-            sellRes.onSuccess { id -> preferences.okxActiveSellOrderId = id }
-            sellRes.onFailure { err -> log(LogLevel.ERROR, callerTag, "OKX Limit Satış emri başarısız: ${err.message}") }
 
             // Place Buy Order
             val buyRes = createOrder(
@@ -402,10 +429,33 @@ class OkxRepository(
                 qty = gridPlan.buyBaseQty,
                 price = gridPlan.buyLimitPrice
             )
-            buyRes.onSuccess { id -> preferences.okxActiveBuyOrderId = id }
-            buyRes.onFailure { err -> log(LogLevel.ERROR, callerTag, "OKX Limit Alış emri başarısız: ${err.message}") }
 
-            Result.success(com.example.data.repository.ReconciliationResult(message = "OKX Grid emirleri yeniden kuruldu"))
+            if (sellRes.isSuccess && buyRes.isSuccess) {
+                val sid = sellRes.getOrNull().orEmpty()
+                val bid = buyRes.getOrNull().orEmpty()
+                preferences.okxActiveSellOrderId = sid
+                preferences.okxActiveBuyOrderId = bid
+                log(LogLevel.INFO, callerTag, "OKX Yeni Satış Limit Emri: $sid @ ${gridPlan.sellLimitPrice}")
+                log(LogLevel.INFO, callerTag, "OKX Yeni Alış Limit Emri: $bid @ ${gridPlan.buyLimitPrice}")
+                Result.success(com.example.data.repository.ReconciliationResult(message = "OKX Grid emirleri yeniden kuruldu"))
+            } else {
+                // ASYMMETRIC FAILURE GUARD / ROLLBACK
+                val sid = sellRes.getOrNull().orEmpty()
+                val bid = buyRes.getOrNull().orEmpty()
+                if (sellRes.isSuccess && sid.isNotBlank()) {
+                    log(LogLevel.ERROR, callerTag, "OKX Alış emri açılamadı (${buyRes.exceptionOrNull()?.message}). Açılan satış emri ($sid) geri alınıyor...")
+                    cancelOrder(sid)
+                }
+                if (buyRes.isSuccess && bid.isNotBlank()) {
+                    log(LogLevel.ERROR, callerTag, "OKX Satış emri açılamadı (${sellRes.exceptionOrNull()?.message}). Açılan alış emri ($bid) geri alınıyor...")
+                    cancelOrder(bid)
+                }
+                preferences.okxActiveSellOrderId = ""
+                preferences.okxActiveBuyOrderId = ""
+                val errMsg = "OKX Izgara tam açılamadı. Satış: ${sellRes.exceptionOrNull()?.message ?: "OK"}, Alış: ${buyRes.exceptionOrNull()?.message ?: "OK"}"
+                log(LogLevel.ERROR, callerTag, errMsg)
+                Result.failure(Exception(errMsg))
+            }
 
         } finally {
             reconcileMutex.unlock()
@@ -509,11 +559,7 @@ class OkxRepository(
                 val alreadyInTrades = if (orderId.isNotBlank()) exchangeTradeDao.hasTradeForOrder(orderId) else false
                 if (!alreadyInTrades) {
                     val execPrice = if (price > 0.0) price else existing?.price ?: preferences.okxLastRebalancePrice
-                    var execQty = if (qty > 0.0) qty else existing?.qty ?: 0.0
-                    // Fallback calculation: If qty is still 0.0, compute from min trade notional (e.g. 5 USDT) or step
-                    if (execQty <= 0.0 && execPrice > 0.0) {
-                        execQty = 5.0 / execPrice
-                    }
+                    val execQty = if (qty > 0.0) qty else existing?.qty ?: 0.0
                     if (execPrice > 0.0 && execQty > 0.0) {
                         val execValue = execPrice * execQty
                         val execFee = execValue * 0.001

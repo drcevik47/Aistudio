@@ -28,16 +28,15 @@ import com.example.ui.theme.*
 @Composable
 fun OkxApiKeySetupDialog(
     initialApiKey: String = "",
-    initialApiSecret: String = "",
-    initialPassphrase: String = "",
+    hasExistingCredentials: Boolean = false,
     isLoading: Boolean = false,
     isDismissable: Boolean = false,
     onDismiss: () -> Unit = {},
     onSave: (key: String, secret: String, passphrase: String) -> Unit
 ) {
-    var apiKey by remember { mutableStateOf(initialApiKey) }
-    var apiSecret by remember { mutableStateOf(initialApiSecret) }
-    var passphrase by remember { mutableStateOf(initialPassphrase) }
+    var apiKey by remember(initialApiKey) { mutableStateOf(initialApiKey) }
+    var apiSecret by remember { mutableStateOf("") }
+    var passphrase by remember { mutableStateOf("") }
     var showSecret by remember { mutableStateOf(false) }
     var showPassphrase by remember { mutableStateOf(false) }
     var validationError by remember { mutableStateOf<String?>(null) }
@@ -123,6 +122,7 @@ fun OkxApiKeySetupDialog(
                     },
                     shape = RoundedCornerShape(14.dp),
                     label = { Text("API Secret") },
+                    placeholder = { Text(if (hasExistingCredentials) "•••••••• (Kayıtlı - değiştirmek için yazın)" else "API Secret") },
                     leadingIcon = {
                         Icon(Icons.Default.Lock, contentDescription = null, tint = MinimalPrimary)
                     },
@@ -156,6 +156,7 @@ fun OkxApiKeySetupDialog(
                     },
                     shape = RoundedCornerShape(14.dp),
                     label = { Text("API Passphrase (Şifre)") },
+                    placeholder = { Text(if (hasExistingCredentials) "•••••••• (Kayıtlı - değiştirmek için yazın)" else "API Passphrase") },
                     leadingIcon = {
                         Icon(Icons.Default.VpnKey, contentDescription = null, tint = MinimalPrimary)
                     },
@@ -205,7 +206,9 @@ fun OkxApiKeySetupDialog(
 
                     Button(
                         onClick = {
-                            if (apiKey.isBlank() || apiSecret.isBlank() || passphrase.isBlank()) {
+                            if (apiKey.isBlank()) {
+                                validationError = "API Key zorunludur."
+                            } else if ((apiSecret.isBlank() || passphrase.isBlank()) && !hasExistingCredentials) {
                                 validationError = "Tüm alanların doldurulması zorunludur."
                             } else {
                                 onSave(apiKey.trim(), apiSecret.trim(), passphrase.trim())

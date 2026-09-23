@@ -614,8 +614,8 @@ fun DashboardScreen(
             // API Keys Setup Dialog
             if (state.showApiKeyDialog) {
                 ApiKeySetupDialog(
-                    initialApiKey = state.apiKey,
-                    initialApiSecret = state.apiSecret,
+                    initialApiKey = viewModel.preferences.apiKey,
+                    hasExistingSecret = state.hasBybitCredentials,
                     initialIsTestnet = state.isTestnet,
                     isDismissable = true,
                     isLoading = state.isLoading,
@@ -650,9 +650,8 @@ fun DashboardScreen(
 
             if (showOkxApiKeysDialog) {
                 com.example.ui.components.OkxApiKeySetupDialog(
-                    initialApiKey = state.okxApiKey,
-                    initialApiSecret = state.okxApiSecret,
-                    initialPassphrase = state.okxApiPassphrase,
+                    initialApiKey = viewModel.preferences.okxApiKey,
+                    hasExistingCredentials = state.hasOkxCredentials,
                     isDismissable = true,
                     isLoading = state.isLoading,
                     onDismiss = { showOkxApiKeysDialog = false },

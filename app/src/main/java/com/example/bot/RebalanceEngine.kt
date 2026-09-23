@@ -4,6 +4,8 @@ import com.example.data.local.entity.ExchangeTradeEntity
 import com.example.data.local.entity.OrderEntity
 import com.example.data.remote.model.BybitExecutionDto
 import com.example.data.remote.model.TradeAnalysisResult
+import java.math.BigDecimal
+import java.math.RoundingMode
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -167,13 +169,52 @@ object RebalanceEngine {
         return frac.length
     }
 
+    fun roundToStep(value: Double, stepStr: String?, mode: RoundingMode = RoundingMode.HALF_UP): Double {
+        if (value <= 0.0) return 0.0
+        if (stepStr.isNullOrBlank()) return value
+        return try {
+            val step = BigDecimal(stepStr)
+            if (step <= BigDecimal.ZERO) return value
+            val valBd = BigDecimal.valueOf(value)
+            val numSteps = valBd.divide(step, 0, mode)
+            numSteps.multiply(step).toDouble()
+        } catch (e: Exception) {
+            value
+        }
+    }
+
+    fun formatWithStep(value: Double, stepStr: String?, mode: RoundingMode = RoundingMode.HALF_UP): String {
+        if (value <= 0.0) return "0"
+        if (stepStr.isNullOrBlank()) {
+            return String.format(Locale.US, "%.4f", value).trimEnd('0').trimEnd('.')
+        }
+        return try {
+            val step = BigDecimal(stepStr)
+            if (step <= BigDecimal.ZERO) return value.toString()
+            val valBd = BigDecimal.valueOf(value)
+            val numSteps = valBd.divide(step, 0, mode)
+            val rounded = numSteps.multiply(step)
+            val scale = step.scale()
+            if (scale > 0) {
+                rounded.setScale(scale, mode).toPlainString()
+            } else {
+                rounded.setScale(0, mode).toPlainString()
+            }
+        } catch (e: Exception) {
+            String.format(Locale.US, "%.4f", value).trimEnd('0').trimEnd('.')
+        }
+    }
+
     fun calculateGridOrders(
         usdtBalance: Double,
         baseCoinBalance: Double,
         basePrice: Double,
         stepPercent: Double = 2.0,
         qtyPrecision: Int? = null,
-        pricePrecision: Int? = null
+        pricePrecision: Int? = null,
+        tickSize: String? = null,
+        lotStep: String? = null,
+        minOrderAmt: Double = 5.0
     ): GridOrdersPlan {
         if (basePrice <= 0.0 || usdtBalance <= 0.0 || baseCoinBalance <= 0.0) {
             return GridOrdersPlan(
@@ -197,20 +238,33 @@ object RebalanceEngine {
             basePrice >= 0.01 -> 5
             else -> 6
         }
-        val priceFactor = Math.pow(10.0, effectivePricePrecision.toDouble())
-        val sellPrice = kotlin.math.round(basePrice * (1.0 + stepRatio) * priceFactor) / priceFactor
-        val buyPrice = kotlin.math.round(basePrice * (1.0 - stepRatio) * priceFactor) / priceFactor
+
+        val tickBd = tickSize?.takeIf { it.isNotBlank() }?.let { runCatching { BigDecimal(it) }.getOrNull() }
+        val sellPriceBd = if (tickBd != null && tickBd > BigDecimal.ZERO) {
+            val raw = BigDecimal.valueOf(basePrice).multiply(BigDecimal.ONE.add(BigDecimal.valueOf(stepRatio)))
+            raw.divide(tickBd, 0, RoundingMode.HALF_UP).multiply(tickBd)
+        } else {
+            val priceFactor = Math.pow(10.0, effectivePricePrecision.toDouble())
+            BigDecimal.valueOf(kotlin.math.round(basePrice * (1.0 + stepRatio) * priceFactor) / priceFactor)
+        }
+
+        val buyPriceBd = if (tickBd != null && tickBd > BigDecimal.ZERO) {
+            val raw = BigDecimal.valueOf(basePrice).multiply(BigDecimal.ONE.subtract(BigDecimal.valueOf(stepRatio)))
+            raw.divide(tickBd, 0, RoundingMode.HALF_UP).multiply(tickBd)
+        } else {
+            val priceFactor = Math.pow(10.0, effectivePricePrecision.toDouble())
+            BigDecimal.valueOf(kotlin.math.round(basePrice * (1.0 - stepRatio) * priceFactor) / priceFactor)
+        }
+
+        val sellPrice = sellPriceBd.toDouble()
+        val buyPrice = buyPriceBd.toDouble()
 
         // Calculate total equity evaluated at the base price
         val totalEquityAtBase = usdtBalance + (baseCoinBalance * basePrice)
         val halfEquityAtBase = totalEquityAtBase / 2.0
 
-        // In a 50/50 grid, when price moves by stepRatio (e.g. 2%),
-        // the theoretical infinitesimal rebalance size is:
+        // In a 50/50 grid, target rebalance amount at the trigger step
         val targetUsdtTrade = (halfEquityAtBase * stepRatio) / 2.0
-
-        // Bybit/OKX Spot minimum order amount is ~5.0 USDT
-        val minUsdtAmt = 5.0
 
         val qtyDecimals = qtyPrecision ?: when {
             basePrice >= 10000.0 -> 6
@@ -220,44 +274,65 @@ object RebalanceEngine {
             basePrice >= 1.0 -> 2
             else -> 1
         }
+        val stepBd = lotStep?.takeIf { it.isNotBlank() }?.let { runCatching { BigDecimal(it) }.getOrNull() }
         val factor = Math.pow(10.0, qtyDecimals.toDouble())
-        val minBaseQty = 1.0 / factor
+        val minBaseQty = stepBd?.toDouble() ?: (1.0 / factor)
 
         // 1. SELL LIMIT ORDER (+stepPercent)
-        // Sell targetUsdtTrade worth of BASE at sellPrice
-        var sellBaseQty = targetUsdtTrade / sellPrice
-        sellBaseQty = kotlin.math.floor(sellBaseQty * factor) / factor
-        if (sellBaseQty > baseCoinBalance * 0.99) {
-            sellBaseQty = kotlin.math.floor(baseCoinBalance * 0.99 * factor) / factor
+        var sellBaseQtyBd = if (stepBd != null && stepBd > BigDecimal.ZERO) {
+            val raw = BigDecimal.valueOf(targetUsdtTrade).divide(sellPriceBd, 12, RoundingMode.DOWN)
+            raw.divide(stepBd, 0, RoundingMode.FLOOR).multiply(stepBd)
+        } else {
+            BigDecimal.valueOf(kotlin.math.floor((targetUsdtTrade / sellPrice) * factor) / factor)
         }
+
+        val maxSellBd = if (stepBd != null && stepBd > BigDecimal.ZERO) {
+            BigDecimal.valueOf(baseCoinBalance * 0.999).divide(stepBd, 0, RoundingMode.FLOOR).multiply(stepBd)
+        } else {
+            BigDecimal.valueOf(kotlin.math.floor(baseCoinBalance * 0.999 * factor) / factor)
+        }
+        if (sellBaseQtyBd > maxSellBd) {
+            sellBaseQtyBd = maxSellBd
+        }
+        val sellBaseQty = sellBaseQtyBd.toDouble()
         val sellUsdtValue = sellBaseQty * sellPrice
         val postSellUsdt = usdtBalance + sellUsdtValue
         val postSellBaseValue = (baseCoinBalance - sellBaseQty) * sellPrice
 
         // 2. BUY LIMIT ORDER (-stepPercent)
-        // Buy targetUsdtTrade worth of BASE at buyPrice
-        var buyBaseQty = targetUsdtTrade / buyPrice
-        buyBaseQty = kotlin.math.floor(buyBaseQty * factor) / factor
-        var buyUsdtValue = buyBaseQty * buyPrice
-        if (buyUsdtValue > usdtBalance * 0.99) {
-            val maxUsdt = usdtBalance * 0.99
-            buyBaseQty = kotlin.math.floor((maxUsdt / buyPrice) * factor) / factor
-            buyUsdtValue = buyBaseQty * buyPrice
+        var buyBaseQtyBd = if (stepBd != null && stepBd > BigDecimal.ZERO) {
+            val raw = BigDecimal.valueOf(targetUsdtTrade).divide(buyPriceBd, 12, RoundingMode.DOWN)
+            raw.divide(stepBd, 0, RoundingMode.FLOOR).multiply(stepBd)
+        } else {
+            BigDecimal.valueOf(kotlin.math.floor((targetUsdtTrade / buyPrice) * factor) / factor)
         }
+
+        val maxUsdt = usdtBalance * 0.999
+        var buyUsdtValue = (buyBaseQtyBd.multiply(buyPriceBd)).toDouble()
+        if (buyUsdtValue > maxUsdt) {
+            buyBaseQtyBd = if (stepBd != null && stepBd > BigDecimal.ZERO) {
+                val raw = BigDecimal.valueOf(maxUsdt).divide(buyPriceBd, 12, RoundingMode.DOWN)
+                raw.divide(stepBd, 0, RoundingMode.FLOOR).multiply(stepBd)
+            } else {
+                BigDecimal.valueOf(kotlin.math.floor((maxUsdt / buyPrice) * factor) / factor)
+            }
+            buyUsdtValue = (buyBaseQtyBd.multiply(buyPriceBd)).toDouble()
+        }
+        val buyBaseQty = buyBaseQtyBd.toDouble()
         val postBuyUsdt = usdtBalance - buyUsdtValue
         val postBuyBaseValue = (baseCoinBalance + buyBaseQty) * buyPrice
 
-        val isSellValid = sellBaseQty >= minBaseQty && sellUsdtValue >= minUsdtAmt && sellBaseQty <= baseCoinBalance
-        val isBuyValid = buyBaseQty >= minBaseQty && buyUsdtValue >= minUsdtAmt && buyUsdtValue <= usdtBalance
+        val isSellValid = sellBaseQty >= minBaseQty && sellUsdtValue >= minOrderAmt && sellBaseQty <= baseCoinBalance
+        val isBuyValid = buyBaseQty >= minBaseQty && buyUsdtValue >= minOrderAmt && buyUsdtValue <= usdtBalance
 
         val isValid = isSellValid && isBuyValid
         val msg = when {
-            sellBaseQty > baseCoinBalance || baseCoinBalance * sellPrice < minUsdtAmt ->
-                "Yetersiz coin bakiyesi (Min: ${format2(minUsdtAmt)} USDT değerinde coin gerekir, Eldeki: ${format4(baseCoinBalance)})"
-            buyUsdtValue > usdtBalance || usdtBalance < minUsdtAmt ->
-                "Yetersiz USDT bakiyesi (Min: ${format2(minUsdtAmt)} USDT gerekir, Eldeki: ${format2(usdtBalance)} USDT)"
-            sellUsdtValue < minUsdtAmt || buyUsdtValue < minUsdtAmt ->
-                "Minimum spot emir tutarı 5.0 USDT'dir. Hesaptaki bakiyeler (USDT ve Coin) en az 5.2 USDT olmalıdır."
+            sellBaseQty > baseCoinBalance || baseCoinBalance * sellPrice < minOrderAmt ->
+                "Yetersiz coin bakiyesi (Min: ${format2(minOrderAmt)} USDT değerinde coin gerekir, Eldeki: ${format4(baseCoinBalance)})"
+            buyUsdtValue > usdtBalance || usdtBalance < minOrderAmt ->
+                "Yetersiz USDT bakiyesi (Min: ${format2(minOrderAmt)} USDT gerekir, Eldeki: ${format2(usdtBalance)} USDT)"
+            sellUsdtValue < minOrderAmt || buyUsdtValue < minOrderAmt ->
+                "Minimum spot emir tutarı ${format2(minOrderAmt)} USDT'dir. Hesaptaki bakiyeler (USDT ve Coin) yeterli olmalıdır."
             else -> "Hazır: +%$stepPercent (${format4(sellPrice)}) -> ${format4(sellBaseQty)} sat (~${format2(sellUsdtValue)} USDT) | -%$stepPercent (${format4(buyPrice)}) -> ${format4(buyBaseQty)} al (~${format2(buyUsdtValue)} USDT)"
         }
 

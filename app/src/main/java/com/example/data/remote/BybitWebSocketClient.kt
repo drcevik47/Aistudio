@@ -44,6 +44,8 @@ class BybitWebSocketClient(
     private var activeSymbol: String = "MNTUSDT"
     @Volatile
     private var isIntentionalDisconnect: Boolean = false
+    @Volatile
+    private var lastActivityTimeMs: Long = 0L
     var serverTimeOffsetMs: Long = 0L
 
     val isConnected: Boolean
@@ -108,6 +110,7 @@ class BybitWebSocketClient(
                 if (webSocket !== publicWs) return
                 Log.d("BybitWS", "Public WS Connected")
                 reconnectAttempts = 0
+                lastActivityTimeMs = System.currentTimeMillis()
                 val subMsg = JSONObject().apply {
                     put("op", "subscribe")
                     put("args", JSONArray().put("tickers.$activeSymbol"))
@@ -118,6 +121,7 @@ class BybitWebSocketClient(
 
             override fun onMessage(webSocket: WebSocket, text: String) {
                 if (webSocket !== publicWs) return
+                lastActivityTimeMs = System.currentTimeMillis()
                 try {
                     val json = JSONObject(text)
                     val op = json.optString("op", "")
@@ -178,6 +182,7 @@ class BybitWebSocketClient(
 
             override fun onMessage(webSocket: WebSocket, text: String) {
                 if (webSocket !== privateWs) return
+                lastActivityTimeMs = System.currentTimeMillis()
                 try {
                     val json = JSONObject(text)
                     val op = json.optString("op", "")
@@ -286,10 +291,20 @@ class BybitWebSocketClient(
                 delay(15000) // Send ping every 15s to keep within Bybit's 20s timeout
                 try {
                     val ping = JSONObject().put("op", "ping").toString()
-                    publicWs?.send(ping)
-                    privateWs?.send(ping)
+                    val pubSent = publicWs?.send(ping) ?: false
+                    val privSent = if (privateWs != null) (privateWs?.send(ping) ?: false) else true
+
+                    val now = System.currentTimeMillis()
+                    val isZombie = (lastActivityTimeMs > 0 && (now - lastActivityTimeMs > 45_000L)) ||
+                            (!pubSent && publicWs != null) ||
+                            (!privSent && privateWs != null)
+
+                    if (isZombie) {
+                        Log.w("BybitWS", "Zombie or dead socket detected (no activity for ${now - lastActivityTimeMs}ms or ping send failed). Reconnecting...")
+                        scheduleReconnect()
+                    }
                 } catch (e: Exception) {
-                    // Ignore ping failures
+                    scheduleReconnect()
                 }
             }
         }
@@ -299,7 +314,8 @@ class BybitWebSocketClient(
         if (!isRunning || isIntentionalDisconnect) return
         if (reconnectJob?.isActive == true) return // Already reconnecting
         reconnectJob = scope.launch(Dispatchers.IO) {
-            val backoffMs = (reconnectAttempts * 2000L).coerceIn(2000L, 8000L)
+            val backoffMs = (2000L * Math.pow(1.5, reconnectAttempts.coerceAtMost(8).toDouble()).toLong())
+                .coerceIn(2000L, 30_000L)
             reconnectAttempts++
             delay(backoffMs)
             if (isRunning && !isIntentionalDisconnect) {
@@ -309,6 +325,20 @@ class BybitWebSocketClient(
                 if (apiKey.isNotBlank() && apiSecret.isNotBlank()) {
                     startPrivateWs()
                 }
+            }
+        }
+    }
+
+    fun reconnectNow() {
+        if (!isRunning || isIntentionalDisconnect) return
+        scope.launch(Dispatchers.IO) {
+            Log.d("BybitWS", "Forced reconnectNow requested...")
+            reconnectJob?.cancel()
+            reconnectAttempts = 0
+            disconnectInternal()
+            startPublicWs()
+            if (apiKey.isNotBlank() && apiSecret.isNotBlank()) {
+                startPrivateWs()
             }
         }
     }

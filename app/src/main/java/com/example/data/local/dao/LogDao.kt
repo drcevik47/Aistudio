@@ -9,10 +9,10 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface LogDao {
-    @Query("SELECT * FROM system_logs ORDER BY timestamp DESC LIMIT 10000")
+    @Query("SELECT * FROM system_logs ORDER BY timestamp DESC LIMIT 1000")
     fun getAllLogs(): Flow<List<LogEntity>>
 
-    @Query("SELECT * FROM system_logs WHERE level = :level ORDER BY timestamp DESC LIMIT 10000")
+    @Query("SELECT * FROM system_logs WHERE level = :level ORDER BY timestamp DESC LIMIT 1000")
     fun getLogsByLevel(level: String): Flow<List<LogEntity>>
 
     @Query("SELECT * FROM system_logs ORDER BY timestamp DESC LIMIT :limit")

@@ -71,7 +71,7 @@ import com.example.ui.theme.MinimalTextSecondary
 @Composable
 fun ApiKeySetupDialog(
     initialApiKey: String,
-    initialApiSecret: String,
+    hasExistingSecret: Boolean = false,
     initialIsTestnet: Boolean,
     isDismissable: Boolean,
     isLoading: Boolean,
@@ -79,7 +79,7 @@ fun ApiKeySetupDialog(
     onSave: (apiKey: String, apiSecret: String, isTestnet: Boolean) -> Unit
 ) {
     var apiKey by remember(initialApiKey) { mutableStateOf(initialApiKey) }
-    var apiSecret by remember(initialApiSecret) { mutableStateOf(initialApiSecret) }
+    var apiSecret by remember { mutableStateOf("") }
     var isTestnet by remember(initialIsTestnet) { mutableStateOf(initialIsTestnet) }
     var showSecret by remember { mutableStateOf(false) }
     var validationError by remember { mutableStateOf<String?>(null) }
@@ -222,7 +222,7 @@ fun ApiKeySetupDialog(
                     },
                     shape = RoundedCornerShape(14.dp),
                     label = { Text("API Secret") },
-                    placeholder = { Text("e.g. m1G7xZ90...") },
+                    placeholder = { Text(if (hasExistingSecret) "•••••••• (Kayıtlı - değiştirmek için yazın)" else "e.g. m1G7xZ90...") },
                     leadingIcon = {
                         Icon(Icons.Default.Lock, contentDescription = null, tint = MinimalPrimary)
                     },
@@ -309,8 +309,10 @@ fun ApiKeySetupDialog(
 
                     Button(
                         onClick = {
-                            if (apiKey.isBlank() || apiSecret.isBlank()) {
-                                validationError = "Please provide both API Key and API Secret."
+                            if (apiKey.isBlank()) {
+                                validationError = "Lütfen API Key girin."
+                            } else if (apiSecret.isBlank() && !hasExistingSecret) {
+                                validationError = "Lütfen API Secret girin."
                             } else {
                                 onSave(apiKey.trim(), apiSecret.trim(), isTestnet)
                             }
