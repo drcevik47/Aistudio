@@ -617,19 +617,49 @@ class OkxRepository(
                 log(LogLevel.INFO, callerTag, "OKX Yeni Alış Limit Emri: $bid @ ${gridPlan.buyLimitPrice}")
                 Result.success(com.example.data.repository.ReconciliationResult(message = "OKX Grid emirleri yeniden kuruldu"))
             } else {
-                // ASYMMETRIC FAILURE GUARD / ROLLBACK
+                // ASYMMETRIC FAILURE GUARD / SAFE ROLLBACK
                 val sid = sellRes.getOrNull().orEmpty()
                 val bid = buyRes.getOrNull().orEmpty()
                 if (sellRes.isSuccess && sid.isNotBlank()) {
-                    log(LogLevel.ERROR, callerTag, "OKX Alış emri açılamadı (${buyRes.exceptionOrNull()?.message}). Açılan satış emri ($sid) geri alınıyor...")
-                    cancelOrder(sid)
+                    log(LogLevel.ERROR, callerTag, "OKX Alış emri açılamadı (${buyRes.exceptionOrNull()?.message}). Açılan satış emri ($sid) güvenli geri alınıyor...")
+                    val rb = safeRollbackOrder(sid, "Sell", callerTag)
+                    when (rb) {
+                        is OkxRollbackResult.Cancelled -> {
+                            preferences.okxActiveSellOrderId = ""
+                        }
+                        is OkxRollbackResult.Filled -> {
+                            preferences.okxActiveSellOrderId = ""
+                            val filledPrice = rb.order.avgPx?.toDoubleOrNull() ?: rb.order.px?.toDoubleOrNull() ?: 0.0
+                            if (filledPrice > 0.0) {
+                                preferences.okxLastRebalancePrice = filledPrice
+                                log(LogLevel.INFO, callerTag, "OKX Satış emri rollback anında dolduğu için baz fiyat güncellendi: $filledPrice")
+                            }
+                        }
+                        is OkxRollbackResult.StillOpen, is OkxRollbackResult.Unknown -> {
+                            log(LogLevel.ERROR, callerTag, "KRİTİK: OKX Satış emri ($sid) iptal edilemedi veya açık kaldı. Hayalet emir oluşmaması için aktif olarak izleniyor.")
+                        }
+                    }
                 }
                 if (buyRes.isSuccess && bid.isNotBlank()) {
                     log(LogLevel.ERROR, callerTag, "OKX Satış emri açılamadı (${sellRes.exceptionOrNull()?.message}). Açılan alış emri ($bid) geri alınıyor...")
-                    cancelOrder(bid)
+                    val rb = safeRollbackOrder(bid, "Buy", callerTag)
+                    when (rb) {
+                        is OkxRollbackResult.Cancelled -> {
+                            preferences.okxActiveBuyOrderId = ""
+                        }
+                        is OkxRollbackResult.Filled -> {
+                            preferences.okxActiveBuyOrderId = ""
+                            val filledPrice = rb.order.avgPx?.toDoubleOrNull() ?: rb.order.px?.toDoubleOrNull() ?: 0.0
+                            if (filledPrice > 0.0) {
+                                preferences.okxLastRebalancePrice = filledPrice
+                                log(LogLevel.INFO, callerTag, "OKX Alış emri rollback anında dolduğu için baz fiyat güncellendi: $filledPrice")
+                            }
+                        }
+                        is OkxRollbackResult.StillOpen, is OkxRollbackResult.Unknown -> {
+                            log(LogLevel.ERROR, callerTag, "KRİTİK: OKX Alış emri ($bid) iptal edilemedi veya açık kaldı. Hayalet emir oluşmaması için aktif olarak izleniyor.")
+                        }
+                    }
                 }
-                preferences.okxActiveSellOrderId = ""
-                preferences.okxActiveBuyOrderId = ""
                 val errMsg = "OKX Izgara tam açılamadı. Satış: ${sellRes.exceptionOrNull()?.message ?: "OK"}, Alış: ${buyRes.exceptionOrNull()?.message ?: "OK"}"
                 log(LogLevel.ERROR, callerTag, errMsg)
                 Result.failure(Exception(errMsg))
@@ -704,6 +734,74 @@ class OkxRepository(
             } catch (e: Exception) {
                 Result.failure(e)
             }
+        }
+    }
+
+    sealed class OkxRollbackResult {
+        object Cancelled : OkxRollbackResult()
+        data class Filled(val order: OkxOrderDetails) : OkxRollbackResult()
+        data class StillOpen(val order: OkxOrderDetails) : OkxRollbackResult()
+        data class Unknown(val error: Throwable) : OkxRollbackResult()
+    }
+
+    suspend fun safeRollbackOrder(
+        orderId: String,
+        side: String,
+        callerTag: String = "OKX_Rollback"
+    ): OkxRollbackResult = withContext(Dispatchers.IO) {
+        if (orderId.isBlank()) return@withContext OkxRollbackResult.Cancelled
+
+        log(LogLevel.WARN, callerTag, "OKX Asimetrik emir geri alınıyor (iptal isteği): $side ($orderId)...")
+        val cancelRes = cancelOrder(orderId)
+        if (cancelRes.isSuccess) {
+            log(LogLevel.INFO, callerTag, "OKX Emir ($orderId) başarıyla iptal edildi.")
+            return@withContext OkxRollbackResult.Cancelled
+        }
+
+        // İptal başarısız olduysa doğrudan borsadan emir durumunu sorgula
+        log(LogLevel.WARN, callerTag, "OKX Emir ($orderId) doğrudan iptal edilemedi (${cancelRes.exceptionOrNull()?.message}). Borsa durumu sorgulanıyor...")
+        try {
+            val api = createApiService()
+            val checkRes = api.getOrder(instId = preferences.okxSymbol, ordId = orderId)
+            if (checkRes.code == "0" && checkRes.data.isNotEmpty()) {
+                val ord = checkRes.data.first()
+                when {
+                    ord.isFilled || ord.state.equals("filled", ignoreCase = true) || ord.filledQtyValue > 0.0 -> {
+                        log(LogLevel.WARN, callerTag, "OKX Rollback sırasındaki $side emri ($orderId) borsada DOLMUŞ! Dolum kaydı işleniyor.")
+                        val px = ord.avgPx?.toDoubleOrNull() ?: ord.px?.toDoubleOrNull() ?: 0.0
+                        val sz = ord.filledQtyValue.takeIf { it > 0.0 } ?: (ord.sz?.toDoubleOrNull() ?: 0.0)
+                        if (px > 0.0 && sz > 0.0) {
+                            recordOrderFilled(
+                                orderId = orderId,
+                                side = ord.side.replaceFirstChar { it.uppercase() },
+                                price = px,
+                                qty = sz,
+                                triggerReason = "RollbackDetectedFill"
+                            )
+                        }
+                        return@withContext OkxRollbackResult.Filled(ord)
+                    }
+                    ord.isCancelled || ord.state.equals("canceled", ignoreCase = true) || ord.state.equals("order_failed", ignoreCase = true) -> {
+                        log(LogLevel.INFO, callerTag, "OKX Emir ($orderId) borsada zaten iptal edilmiş.")
+                        return@withContext OkxRollbackResult.Cancelled
+                    }
+                    ord.isLive || ord.state.equals("live", ignoreCase = true) || ord.state.equals("partially_filled", ignoreCase = true) -> {
+                        log(LogLevel.ERROR, callerTag, "KRİTİK: OKX Emir ($orderId) borsada HÂLÂ AÇIK (${ord.state})! Silinmedi, aktif tutuluyor.")
+                        return@withContext OkxRollbackResult.StillOpen(ord)
+                    }
+                    else -> {
+                        log(LogLevel.ERROR, callerTag, "OKX Emir ($orderId) durumu belirsiz: ${ord.state}. Güvenlik için aktif tutuluyor.")
+                        return@withContext OkxRollbackResult.StillOpen(ord)
+                    }
+                }
+            } else {
+                val err = Exception("OKX Emir sorgulanamadı: code=${checkRes.code}, msg=${checkRes.msg}")
+                log(LogLevel.ERROR, callerTag, "OKX Borsa ile iletişim kurulamadı ($orderId). Emir güvenliği için aktif sipariş silinmedi: ${err.message}")
+                return@withContext OkxRollbackResult.Unknown(err)
+            }
+        } catch (ex: Exception) {
+            log(LogLevel.ERROR, callerTag, "OKX Emir durumu kontrol hatası ($orderId): ${ex.message}")
+            return@withContext OkxRollbackResult.Unknown(ex)
         }
     }
 

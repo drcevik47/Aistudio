@@ -629,6 +629,69 @@ class BybitRepository(
         }
     }
 
+    sealed class RollbackResult {
+        object Cancelled : RollbackResult()
+        data class Filled(val order: BybitOrderDto) : RollbackResult()
+        data class StillOpen(val order: BybitOrderDto) : RollbackResult()
+        data class Unknown(val error: Throwable) : RollbackResult()
+    }
+
+    suspend fun safeRollbackOrder(
+        orderId: String,
+        side: String,
+        callerTag: String = "Rollback"
+    ): RollbackResult = withContext(Dispatchers.IO) {
+        if (orderId.isBlank()) return@withContext RollbackResult.Cancelled
+
+        log(LogLevel.WARN, callerTag, "Asimetrik emir geri alınıyor (iptal isteği): $side ($orderId)...")
+        val cancelRes = cancelOrder(orderId)
+        if (cancelRes.isSuccess) {
+            log(LogLevel.INFO, callerTag, "Emir ($orderId) başarıyla iptal edildi.")
+            orderDao.deleteOrder(orderId)
+            return@withContext RollbackResult.Cancelled
+        }
+
+        // İptal başarısız olduysa doğrudan borsadan emir geçmişini sorgula
+        log(LogLevel.WARN, callerTag, "Emir ($orderId) doğrudan iptal edilemedi (${cancelRes.exceptionOrNull()?.message}). Borsa durumu sorgulanıyor...")
+        val histRes = getOrderHistory(orderId = orderId)
+        val order = histRes.getOrNull()
+
+        if (order != null) {
+            when {
+                order.isFilled || order.orderStatus.equals("Filled", ignoreCase = true) || order.filledQtyValue > 0.0 -> {
+                    log(LogLevel.WARN, callerTag, "Rollback sırasındaki $side emri ($orderId) borsada DOLMUŞ! Dolum kaydı işleniyor.")
+                    val p = order.avgPriceValue.takeIf { it > 0.0 } ?: order.priceValue
+                    val q = order.filledQtyValue.takeIf { it > 0.0 } ?: order.qtyValue
+                    recordOrderFilled(
+                        orderId = orderId,
+                        side = order.side,
+                        price = p,
+                        qty = q,
+                        triggerReason = "RollbackDetectedFill"
+                    )
+                    return@withContext RollbackResult.Filled(order)
+                }
+                order.isCancelled || order.orderStatus.equals("Cancelled", ignoreCase = true) || order.orderStatus.equals("Deactivated", ignoreCase = true) -> {
+                    log(LogLevel.INFO, callerTag, "Emir ($orderId) borsada zaten iptal edilmiş.")
+                    orderDao.deleteOrder(orderId)
+                    return@withContext RollbackResult.Cancelled
+                }
+                order.isActive || order.orderStatus.equals("New", ignoreCase = true) || order.orderStatus.equals("PartiallyFilled", ignoreCase = true) -> {
+                    log(LogLevel.ERROR, callerTag, "KRİTİK: Emir ($orderId) borsada HÂLÂ AÇIK (${order.orderStatus})! Silinmedi, aktif tutuluyor.")
+                    return@withContext RollbackResult.StillOpen(order)
+                }
+                else -> {
+                    log(LogLevel.ERROR, callerTag, "Emir ($orderId) durumu belirsiz: ${order.orderStatus}. Güvenlik için aktif tutuluyor.")
+                    return@withContext RollbackResult.StillOpen(order)
+                }
+            }
+        } else {
+            val err = histRes.exceptionOrNull() ?: Exception("Borsadan emir durumu doğrulanamadı")
+            log(LogLevel.ERROR, callerTag, "Borsa ile iletişim kurulamadı ($orderId). Emir güvenliği için aktif sipariş silinmedi: ${err.message}")
+            return@withContext RollbackResult.Unknown(err)
+        }
+    }
+
     suspend fun findOrderByLinkId(
         orderLinkId: String,
         category: String = "spot",
@@ -1198,22 +1261,44 @@ class BybitRepository(
                                 )
                             )
                         } else {
-                            // ASYMMETRIC FAILURE GUARD / ROLLBACK:
+                            // ASYMMETRIC FAILURE GUARD / SAFE ROLLBACK:
                             // Never leave a single open order stranded, otherwise next cycle assumes the other side was filled!
                             val sid = sellRes.getOrNull().orEmpty()
                             val bid = buyRes.getOrNull().orEmpty()
                             if (sellRes.isSuccess && sid.isNotBlank()) {
-                                log(LogLevel.ERROR, callerTag, "Alış emri açılamadı (${buyRes.exceptionOrNull()?.message}). Açılan satış emri ($sid) geri alınıyor (rollback)...")
-                                cancelOrder(sid)
-                                orderDao.deleteOrder(sid)
+                                log(LogLevel.ERROR, callerTag, "Alış emri açılamadı (${buyRes.exceptionOrNull()?.message}). Açılan satış emri ($sid) güvenli geri alınıyor...")
+                                val rb = safeRollbackOrder(sid, "Sell", callerTag)
+                                when (rb) {
+                                    is RollbackResult.Cancelled -> {
+                                        preferences.activeSellOrderId = ""
+                                    }
+                                    is RollbackResult.Filled -> {
+                                        preferences.activeSellOrderId = ""
+                                        preferences.lastRebalancePrice = rb.order.avgPriceValue.takeIf { it > 0.0 } ?: rb.order.priceValue
+                                        log(LogLevel.INFO, callerTag, "Satış emri rollback anında dolduğu için baz fiyat güncellendi: ${preferences.lastRebalancePrice}")
+                                    }
+                                    is RollbackResult.StillOpen, is RollbackResult.Unknown -> {
+                                        log(LogLevel.ERROR, callerTag, "KRİTİK: Satış emri ($sid) iptal edilemedi veya açık kaldı. Hayalet emir oluşmaması için aktif olarak izleniyor.")
+                                    }
+                                }
                             }
                             if (buyRes.isSuccess && bid.isNotBlank()) {
-                                log(LogLevel.ERROR, callerTag, "Satış emri açılamadı (${sellRes.exceptionOrNull()?.message}). Açılan alış emri ($bid) geri alınıyor (rollback)...")
-                                cancelOrder(bid)
-                                orderDao.deleteOrder(bid)
+                                log(LogLevel.ERROR, callerTag, "Satış emri açılamadı (${sellRes.exceptionOrNull()?.message}). Açılan alış emri ($bid) güvenli geri alınıyor...")
+                                val rb = safeRollbackOrder(bid, "Buy", callerTag)
+                                when (rb) {
+                                    is RollbackResult.Cancelled -> {
+                                        preferences.activeBuyOrderId = ""
+                                    }
+                                    is RollbackResult.Filled -> {
+                                        preferences.activeBuyOrderId = ""
+                                        preferences.lastRebalancePrice = rb.order.avgPriceValue.takeIf { it > 0.0 } ?: rb.order.priceValue
+                                        log(LogLevel.INFO, callerTag, "Alış emri rollback anında dolduğu için baz fiyat güncellendi: ${preferences.lastRebalancePrice}")
+                                    }
+                                    is RollbackResult.StillOpen, is RollbackResult.Unknown -> {
+                                        log(LogLevel.ERROR, callerTag, "KRİTİK: Alış emri ($bid) iptal edilemedi veya açık kaldı. Hayalet emir oluşmaması için aktif olarak izleniyor.")
+                                    }
+                                }
                             }
-                            preferences.activeSellOrderId = ""
-                            preferences.activeBuyOrderId = ""
                             val errMsg = "Izgara tam açılamadı. Satış: ${sellRes.exceptionOrNull()?.message ?: "OK"}, Alış: ${buyRes.exceptionOrNull()?.message ?: "OK"}"
                             log(LogLevel.ERROR, callerTag, errMsg)
                             return@withContext Result.failure(Exception(errMsg))
@@ -1350,21 +1435,43 @@ class BybitRepository(
                                     )
                                 )
                             } else {
-                                // ASYMMETRIC FAILURE GUARD / ROLLBACK
+                                // ASYMMETRIC FAILURE GUARD / SAFE ROLLBACK
                                 val sid = sellRes.getOrNull().orEmpty()
                                 val bid = buyRes.getOrNull().orEmpty()
                                 if (sellRes.isSuccess && sid.isNotBlank()) {
-                                    log(LogLevel.ERROR, callerTag, "Alış emri açılamadı (${buyRes.exceptionOrNull()?.message}). Açılan satış emri ($sid) geri alınıyor...")
-                                    cancelOrder(sid)
-                                    orderDao.deleteOrder(sid)
+                                    log(LogLevel.ERROR, callerTag, "Alış emri açılamadı (${buyRes.exceptionOrNull()?.message}). Açılan satış emri ($sid) güvenli geri alınıyor...")
+                                    val rb = safeRollbackOrder(sid, "Sell", callerTag)
+                                    when (rb) {
+                                        is RollbackResult.Cancelled -> {
+                                            preferences.activeSellOrderId = ""
+                                        }
+                                        is RollbackResult.Filled -> {
+                                            preferences.activeSellOrderId = ""
+                                            preferences.lastRebalancePrice = rb.order.avgPriceValue.takeIf { it > 0.0 } ?: rb.order.priceValue
+                                            log(LogLevel.INFO, callerTag, "Satış emri rollback anında dolduğu için baz fiyat güncellendi: ${preferences.lastRebalancePrice}")
+                                        }
+                                        is RollbackResult.StillOpen, is RollbackResult.Unknown -> {
+                                            log(LogLevel.ERROR, callerTag, "KRİTİK: Satış emri ($sid) iptal edilemedi veya açık kaldı. Hayalet emir oluşmaması için aktif olarak izleniyor.")
+                                        }
+                                    }
                                 }
                                 if (buyRes.isSuccess && bid.isNotBlank()) {
-                                    log(LogLevel.ERROR, callerTag, "Satış emri açılamadı (${sellRes.exceptionOrNull()?.message}). Açılan alış emri ($bid) geri alınıyor...")
-                                    cancelOrder(bid)
-                                    orderDao.deleteOrder(bid)
+                                    log(LogLevel.ERROR, callerTag, "Satış emri açılamadı (${sellRes.exceptionOrNull()?.message}). Açılan alış emri ($bid) güvenli geri alınıyor...")
+                                    val rb = safeRollbackOrder(bid, "Buy", callerTag)
+                                    when (rb) {
+                                        is RollbackResult.Cancelled -> {
+                                            preferences.activeBuyOrderId = ""
+                                        }
+                                        is RollbackResult.Filled -> {
+                                            preferences.activeBuyOrderId = ""
+                                            preferences.lastRebalancePrice = rb.order.avgPriceValue.takeIf { it > 0.0 } ?: rb.order.priceValue
+                                            log(LogLevel.INFO, callerTag, "Alış emri rollback anında dolduğu için baz fiyat güncellendi: ${preferences.lastRebalancePrice}")
+                                        }
+                                        is RollbackResult.StillOpen, is RollbackResult.Unknown -> {
+                                            log(LogLevel.ERROR, callerTag, "KRİTİK: Alış emri ($bid) iptal edilemedi veya açık kaldı. Hayalet emir oluşmaması için aktif olarak izleniyor.")
+                                        }
+                                    }
                                 }
-                                preferences.activeSellOrderId = ""
-                                preferences.activeBuyOrderId = ""
                                 val errMsg = "Izgara tam açılamadı. Satış: ${sellRes.exceptionOrNull()?.message ?: "OK"}, Alış: ${buyRes.exceptionOrNull()?.message ?: "OK"}"
                                 log(LogLevel.ERROR, callerTag, errMsg)
                                 return@withContext Result.failure(Exception(errMsg))
@@ -1504,18 +1611,31 @@ class BybitRepository(
 
                     // 4. Place new orders on Bybit
                     val sellRes = createOrder("Sell", "Limit", plan.sellBaseQty, plan.sellLimitPrice, "ManualBasePriceUpdate")
-                    sellRes.onSuccess { preferences.activeSellOrderId = it }
-
                     val buyRes = createOrder("Buy", "Limit", plan.buyBaseQty, plan.buyLimitPrice, "ManualBasePriceUpdate")
-                    buyRes.onSuccess { preferences.activeBuyOrderId = it }
 
-                    lastGridOrderPlacedTimeMs = System.currentTimeMillis()
-
-                    log(
-                        LogLevel.SUCCESS,
-                        "BasePrice",
-                        "Yeni baz fiyatla ($${RebalanceEngine.format4(newPrice)}) ızgara emirleri kuruldu. Alış: $${RebalanceEngine.format4(plan.buyLimitPrice)}, Satış: $${RebalanceEngine.format4(plan.sellLimitPrice)}"
-                    )
+                    if (sellRes.isSuccess && buyRes.isSuccess) {
+                        preferences.activeSellOrderId = sellRes.getOrNull().orEmpty()
+                        preferences.activeBuyOrderId = buyRes.getOrNull().orEmpty()
+                        lastGridOrderPlacedTimeMs = System.currentTimeMillis()
+                        log(
+                            LogLevel.SUCCESS,
+                            "BasePrice",
+                            "Yeni baz fiyatla ($${RebalanceEngine.format4(newPrice)}) ızgara emirleri kuruldu. Alış: $${RebalanceEngine.format4(plan.buyLimitPrice)}, Satış: $${RebalanceEngine.format4(plan.sellLimitPrice)}"
+                        )
+                    } else {
+                        // Asymmetric failure rollback
+                        val sid = sellRes.getOrNull().orEmpty()
+                        val bid = buyRes.getOrNull().orEmpty()
+                        if (sellRes.isSuccess && sid.isNotBlank()) {
+                            safeRollbackOrder(sid, "Sell", "BasePrice")
+                        }
+                        if (buyRes.isSuccess && bid.isNotBlank()) {
+                            safeRollbackOrder(bid, "Buy", "BasePrice")
+                        }
+                        val errMsg = "Izgara tam açılamadı. Satış: ${sellRes.exceptionOrNull()?.message ?: "OK"}, Alış: ${buyRes.exceptionOrNull()?.message ?: "OK"}"
+                        log(LogLevel.ERROR, "BasePrice", errMsg)
+                        return@withContext Result.failure(Exception(errMsg))
+                    }
                 }
 
                 orderDao.deleteUnfilledOrders()
