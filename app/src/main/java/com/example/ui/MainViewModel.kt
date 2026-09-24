@@ -253,7 +253,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 currentPrice = currentPrice
             )
 
-            val anchorBasePrice = if (preferences.isBotActive && preferences.lastRebalancePrice > 0.0) {
+            val anchorBasePrice = if (preferences.lastRebalancePrice > 0.0) {
                 preferences.lastRebalancePrice
             } else {
                 currentPrice
@@ -468,7 +468,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 currentPrice = currentPrice
             )
 
-            val anchorBasePrice = if (preferences.isBotActive && preferences.lastRebalancePrice > 0.0) {
+            val anchorBasePrice = if (preferences.lastRebalancePrice > 0.0) {
                 preferences.lastRebalancePrice
             } else {
                 currentPrice
@@ -566,7 +566,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         instrumentDeferred.await()
 
-        val anchorOkxBasePrice = if (preferences.isOkxBotActive && preferences.okxLastRebalancePrice > 0.0) {
+        val anchorOkxBasePrice = if (preferences.okxLastRebalancePrice > 0.0) {
             preferences.okxLastRebalancePrice
         } else {
             okxCurrentPrice
@@ -606,7 +606,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun recalculateGridPlan() {
         val state = _uiState.value
-        val anchorBasePrice = if (preferences.isBotActive && preferences.lastRebalancePrice > 0.0) {
+        val anchorBasePrice = if (preferences.lastRebalancePrice > 0.0) {
             preferences.lastRebalancePrice
         } else {
             state.currentPrice
@@ -630,7 +630,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             maxOrderQty = bybitMaxQty
         )
 
-        val anchorOkxBasePrice = if (preferences.isOkxBotActive && preferences.okxLastRebalancePrice > 0.0) {
+        val anchorOkxBasePrice = if (preferences.okxLastRebalancePrice > 0.0) {
             preferences.okxLastRebalancePrice
         } else {
             state.okxCurrentPrice
@@ -800,13 +800,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun stopBot() {
         preferences.isBotActive = false
-        preferences.lastRebalancePrice = 0.0
+        preferences.activeBuyOrderId = ""
+        preferences.activeSellOrderId = ""
         
         TradingBotService.stop(getApplication(), TradingBotService.EXTRA_EXCHANGE_BYBIT)
         
         viewModelScope.launch(Dispatchers.IO) {
             repository.log(LogLevel.INFO, "System", "Bybit Bot durduruldu")
-            _uiState.update { it.copy(isBotActive = false, lastRebalancePrice = 0.0) }
+            _uiState.update { it.copy(isBotActive = false) }
             cancelAllOrders()
         }
     }

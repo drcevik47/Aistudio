@@ -558,7 +558,7 @@ fun DashboardScreen(
                                 com.example.ui.components.SimulationCard(
                                     currentUsdtBalance = state.portfolioAnalysis?.usdtBalance ?: 0.0,
                                     currentBaseBalance = state.portfolioAnalysis?.baseCoinBalance ?: 0.0,
-                                    currentBasePrice = viewModel.preferences.lastRebalancePrice,
+                                    currentBasePrice = if (viewModel.preferences.lastRebalancePrice > 0.0) viewModel.preferences.lastRebalancePrice else state.currentPrice,
                                     stepPercent = state.stepPercent,
                                     activeBaseCoin = viewModel.preferences.bybitBaseCoin,
                                 )

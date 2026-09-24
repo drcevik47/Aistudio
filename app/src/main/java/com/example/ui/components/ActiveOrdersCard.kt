@@ -206,7 +206,7 @@ fun ActiveOrdersCard(
                     ?: gridPlan?.sellBaseQty
                     ?: 0.0
                 val sellUsdt: Double = if (openSellOrder != null) (sellQty * sellPrice) else (gridPlan?.sellUsdtValue ?: (sellQty * sellPrice))
-                val sellDiffPct: Double = if (currentPrice > 0.0) ((sellPrice - currentPrice) / currentPrice) * 100.0 else stepPercent
+                val sellDiffPct: Double = if (basePriceToShow > 0.0) ((sellPrice - basePriceToShow) / basePriceToShow) * 100.0 else stepPercent
                 val postSellUsdt: Double = gridPlan?.postSellUsdt ?: 0.0
 
                 Row(
@@ -382,7 +382,7 @@ fun ActiveOrdersCard(
                     ?: gridPlan?.buyBaseQty
                     ?: 0.0
                 val buyUsdt: Double = if (openBuyOrder != null) (buyQty * buyPrice) else (gridPlan?.buyUsdtValue ?: (buyQty * buyPrice))
-                val buyDiffPct: Double = if (currentPrice > 0.0) ((currentPrice - buyPrice) / currentPrice) * 100.0 else stepPercent
+                val buyDiffPct: Double = if (basePriceToShow > 0.0) ((basePriceToShow - buyPrice) / basePriceToShow) * 100.0 else stepPercent
                 val postBuyUsdt: Double = gridPlan?.postBuyUsdt ?: 0.0
 
                 Row(
