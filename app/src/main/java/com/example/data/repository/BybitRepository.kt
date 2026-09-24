@@ -2298,26 +2298,122 @@ class BybitRepository(
 
                 exchangeTradeDao.insertTrades(entitiesToInsert)
 
-                // Ayrıca botun Order tablosunda bu emirler yoksa orayı da senkronize edelim
-                for (trade in entitiesToInsert) {
-                    val orderExists = orderDao.getOrderByOrderId(trade.orderId) != null
-                    if (!orderExists) {
-                        orderDao.insertOrder(
-                            OrderEntity(
-                                orderId = trade.orderId,
-                                orderLinkId = trade.orderLinkId,
-                                symbol = trade.symbol,
-                                side = trade.side,
-                                orderType = trade.orderType.ifBlank { "Limit" },
-                                price = trade.execPrice,
-                                qty = trade.execQty,
-                                status = "Filled",
-                                filledQty = trade.execQty,
-                                avgPrice = trade.execPrice,
-                                timestamp = trade.timeMillis,
-                                triggerReason = "BorsaSenkronizasyonu"
-                            )
+                // 5. Bybit resmi /v5/order/history (Emir Geçmişi) listesini çekip haritala
+                // Bu liste emrin gerçek toplam miktarını (ör. 25.77 MNT) ve gerçek açılış anını (createdTime: 17:11:33) verir
+                val recentOrdersRes = try {
+                    fetchFilledOrderHistory(
+                        symbol = symbol,
+                        daysBack = minOf(daysBack, 30),
+                        startTimestamp = startTimestamp,
+                        apiKey = apiKey,
+                        apiSecret = apiSecret,
+                        isTestnet = isTestnet
+                    )
+                } catch (e: Exception) {
+                    Result.failure(e)
+                }
+                val bybitOrdersMap: Map<String, BybitOrderDto> = (recentOrdersRes.getOrNull() ?: emptyList())
+                    .filter { it.orderId.isNotBlank() }
+                    .associateBy { it.orderId }
+
+                // 6. Çekilen dolumları (remoteExecutions) orderId bazında konsolide et (parçalı dolumları birleştir)
+                // Böylece 14.16 MNT gibi tek parçalar değil, emrin gerçek toplamı (25.77 MNT) kaydedilir
+                val executionsToGroup = if (newExecutions.isNotEmpty()) remoteExecutions else emptyList()
+                val groupedByOrderId = executionsToGroup
+                    .filter { it.orderId.isNotBlank() }
+                    .groupBy { it.orderId }
+
+                val ordersToUpsert = mutableListOf<OrderEntity>()
+
+                for ((orderId, tradeGroup) in groupedByOrderId) {
+                    val officialOrder = bybitOrdersMap[orderId]
+                    val firstTrade = tradeGroup.first()
+                    val totalFilledQty = tradeGroup.sumOf { it.qtyValue }
+                    val totalValue = tradeGroup.sumOf { it.totalValue }
+                    val weightedAvgPrice = if (totalFilledQty > 0.0) totalValue / totalFilledQty else firstTrade.priceValue
+                    val maxOrderQty = tradeGroup.firstNotNullOfOrNull { it.orderQty.toDoubleOrNull()?.takeIf { q -> q > 0.0 } } ?: 0.0
+
+                    val effectiveQty = when {
+                        officialOrder != null && officialOrder.qtyValue > 0.0 -> officialOrder.qtyValue
+                        maxOrderQty > 0.0 -> maxOf(maxOrderQty, totalFilledQty)
+                        else -> totalFilledQty
+                    }
+                    val effectiveFilledQty = when {
+                        officialOrder != null && officialOrder.filledQtyValue > 0.0 -> officialOrder.filledQtyValue
+                        else -> totalFilledQty
+                    }
+                    val effectivePrice = when {
+                        officialOrder != null && officialOrder.priceValue > 0.0 -> officialOrder.priceValue
+                        firstTrade.orderPrice.toDoubleOrNull() != null && (firstTrade.orderPrice.toDoubleOrNull() ?: 0.0) > 0.0 -> firstTrade.orderPrice.toDoubleOrNull() ?: weightedAvgPrice
+                        else -> weightedAvgPrice
+                    }
+                    val effectiveAvgPrice = when {
+                        officialOrder != null && officialOrder.avgPriceValue > 0.0 -> officialOrder.avgPriceValue
+                        else -> weightedAvgPrice
+                    }
+                    val effectiveTimestamp = when {
+                        officialOrder != null && officialOrder.createdTimeMillis > 0L -> officialOrder.createdTimeMillis
+                        else -> tradeGroup.minOf { it.timeMillis }
+                    }
+                    val effectiveSide = officialOrder?.side?.ifBlank { firstTrade.side } ?: firstTrade.side
+                    val effectiveOrderType = officialOrder?.orderType?.ifBlank { firstTrade.orderType.ifBlank { "Limit" } } ?: firstTrade.orderType.ifBlank { "Limit" }
+                    val effectiveSymbol = officialOrder?.symbol?.ifBlank { firstTrade.symbol } ?: firstTrade.symbol
+
+                    ordersToUpsert.add(
+                        OrderEntity(
+                            exchange = "BYBIT",
+                            orderId = orderId,
+                            orderLinkId = officialOrder?.orderLinkId?.ifBlank { firstTrade.orderLinkId } ?: firstTrade.orderLinkId,
+                            symbol = effectiveSymbol.ifBlank { preferences.bybitSymbol },
+                            side = effectiveSide,
+                            orderType = effectiveOrderType,
+                            price = if (effectiveOrderType.equals("Market", ignoreCase = true)) effectiveAvgPrice else effectivePrice,
+                            qty = effectiveQty,
+                            status = "Filled",
+                            filledQty = effectiveFilledQty,
+                            avgPrice = effectiveAvgPrice,
+                            timestamp = effectiveTimestamp,
+                            triggerReason = "BorsaSenkronizasyonu"
                         )
+                    )
+                }
+
+                // Bybit /v5/order/history listesindeki diğer resmi emirleri de ekle
+                for ((orderId, officialOrder) in bybitOrdersMap) {
+                    if (groupedByOrderId.containsKey(orderId)) continue
+                    val effectiveSymbol = if (officialOrder.symbol.isNotBlank()) {
+                        officialOrder.symbol.trim().uppercase()
+                    } else {
+                        (symbol?.takeIf { !it.equals("ALL", ignoreCase = true) && !it.equals("TÜM", ignoreCase = true) } ?: preferences.bybitSymbol).trim().uppercase()
+                    }
+                    ordersToUpsert.add(
+                        OrderEntity(
+                            exchange = "BYBIT",
+                            orderId = orderId,
+                            orderLinkId = officialOrder.orderLinkId,
+                            symbol = effectiveSymbol,
+                            side = officialOrder.side,
+                            orderType = officialOrder.orderType.ifBlank { "Limit" },
+                            price = if (officialOrder.priceValue > 0.0) officialOrder.priceValue else officialOrder.avgPriceValue,
+                            qty = if (officialOrder.qtyValue > 0.0) officialOrder.qtyValue else officialOrder.filledQtyValue,
+                            status = "Filled",
+                            filledQty = officialOrder.filledQtyValue,
+                            avgPrice = officialOrder.avgPriceValue,
+                            timestamp = if (officialOrder.createdTimeMillis > 0L) officialOrder.createdTimeMillis else (officialOrder.updatedTimeMillis.takeIf { it > 0L } ?: System.currentTimeMillis()),
+                            triggerReason = "BorsaSenkronizasyonu"
+                        )
+                    )
+                }
+
+                // Veritabanına kaydet/güncelle (Eksik veya parçalı kayıtları tamamlama)
+                for (order in ordersToUpsert) {
+                    val existing = orderDao.getOrderByOrderId(order.orderId)
+                    if (existing == null) {
+                        orderDao.insertOrder(order)
+                    } else if (existing.triggerReason == "BorsaSenkronizasyonu") {
+                        if (existing.filledQty < order.filledQty || existing.qty < order.qty || (order.timestamp < existing.timestamp && order.timestamp > 0L)) {
+                            orderDao.insertOrder(order.copy(id = existing.id))
+                        }
                     }
                 }
 

@@ -973,7 +973,7 @@ class OkxRepository(
                     val ordId = fill.ordId
                     !existingExecIds.contains(execId) &&
                     !existingExecIds.contains("fill_$ordId") &&
-                    (ordId.isBlank() || !existingOrderIds.contains(ordId))
+                    !existingExecIds.contains("okx_fill_$ordId")
                 }
 
                 val newlyAddedExecutionDtos = newFills.map { fill ->
